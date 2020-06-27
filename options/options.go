@@ -11,28 +11,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package config provides the config options for hpinggo tool
-package config
+// Package option provides options for hpinggo tool
+package options
 
 import (
 	"time"
 )
 
-// Config is a type to hold parameters that affect how hpinggo generate and analyze packets
-type Config struct {
+// Options is a type to hold parameters that affect how hpinggo generate and analyze packets
+type Options struct {
 	PollingInterval   time.Duration // Duration between polling events.
 	StreamingDuration time.Duration // Duration to collect response, 0 is forever.
 	Count             uint          // Number of packets to generate, 0 is infinite.
-	countExhausted    bool          // Trigger to indicate termination.
+	RandDest          bool          // Enables the random destination mode
 	Delimiter         string        // Delimiter between path elements when converted to string.
 	Display           func([]byte)  // Function called to display each result.
 	DisplayPrefix     string        // Prefix for each line of result output.
 	DisplayIndent     string        // Indent per nesting level of result output.
-	DisplayType       string        // Display results in selected format, grouped, single, proto.
 	DisplayPeer       bool          // Display the immediate connected peer.
+	Scan              string        // Ports range to scan
+
+	Interface string // Packet outgoing interface
 	// <empty string> - disable timestamp
 	// on - human readable timestamp according to layout
 	// raw - int64 nanos since epoch
 	// <FORMAT> - human readable timestamp according to <FORMAT>
 	Timestamp string // Formatting of timestamp in result output.
+	Ipv6      bool   // run in ipv6 mode
+	Verbose   bool   // verbose pring
+	Debug     bool   // debugging mode
 }
