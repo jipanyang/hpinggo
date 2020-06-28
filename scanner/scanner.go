@@ -72,9 +72,9 @@ func NewScanner(ip net.IP, handle *pcap.Handle, router routing.Router) (*scanner
 	return s, nil
 }
 
-// close cleans up the handle.
 func (s *scanner) Close() {
-	s.handle.Close()
+	// handle not owned by scanner
+	// s.handle.Close()
 }
 
 // getHwAddr is a hacky but effective way to get the destination hardware
