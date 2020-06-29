@@ -4,33 +4,19 @@ import (
 	"errors"
 	log "github.com/golang/glog"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/routing"
+	// "golang.org/x/sys/unix"
 )
 
-// TODO: IPv6 and various protocol support.
-// Only fixed ICMP for now.
+// net raw socket implementation, alternative to nix.IPPROTO_RAW
+var useListenPacket = bool(false)
 
-// func pkt() []byte {
-// 	ip := &layers.IPv4{
-// 		SrcIP:    srcip,
-// 		DstIP:    dstip,
-// 		Protocol: layers.IPProtocolICMPv4,
-// 	}
-// 	// Our TCP header
-// 	icmp := &layers.ICMPv4{
-// 		TypeCode: srcport,
-// 		DstPort:  dstport,
-// 		Seq:      1105024978,
-// 		Id:       true,
-// 		Window:   14600,
-// 	}
-
-// }
 // scanner handles scanning a single IP address.
 type scanner struct {
 	// iface is the interface to send packets on.
@@ -38,7 +24,9 @@ type scanner struct {
 	// destination, gateway (if applicable), and source IP addresses to use.
 	dst, gw, src net.IP
 
-	handle *pcap.Handle
+	handle   *pcap.Handle
+	socketFd int // fd of raw socket
+	ipConn   net.PacketConn
 
 	// opts and buf allow us to easily serialize packets in the send()
 	// method.
@@ -48,9 +36,10 @@ type scanner struct {
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
-func NewScanner(ip net.IP, handle *pcap.Handle, router routing.Router) (*scanner, error) {
+func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router) (*scanner, error) {
 	s := &scanner{
-		dst: ip,
+		dst:      ip,
+		socketFd: fd,
 		opts: gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
@@ -69,6 +58,14 @@ func NewScanner(ip net.IP, handle *pcap.Handle, router routing.Router) (*scanner
 	// decrease the number of packets we have to look at when getting back
 	// scan results.
 	s.handle = handle
+
+	if useListenPacket {
+		ipConn, err := net.ListenPacket("ip4:tcp", "0.0.0.0")
+		if err != nil {
+			panic(err)
+		}
+		s.ipConn = ipConn
+	}
 	return s, nil
 }
 
@@ -113,7 +110,7 @@ func (s *scanner) getHwAddr() (net.HardwareAddr, error) {
 	// Wait 3 seconds for an ARP reply.
 	for {
 		if time.Since(start) > time.Second*3 {
-			return nil, errors.New("timeout getting ARP reply")
+			return nil, errors.New("getHwAddr: timeout getting ARP reply")
 		}
 		data, _, err := s.handle.ReadPacketData()
 		if err == pcap.NextErrorTimeoutExpired {
@@ -131,18 +128,24 @@ func (s *scanner) getHwAddr() (net.HardwareAddr, error) {
 	}
 }
 
-// scan scans the dst IP address of this scanner.
+// scanner scans the dst IP address.
 func (s *scanner) Scan() error {
-	// First off, get the MAC address we should be sending packets to.
-	hwaddr, err := s.getHwAddr()
-	if err != nil {
-		return err
-	}
-	// Construct all the network layers we need.
-	eth := layers.Ethernet{
-		SrcMAC:       s.iface.HardwareAddr,
-		DstMAC:       hwaddr,
-		EthernetType: layers.EthernetTypeIPv4,
+	// if using pcap for sending packets
+	var hwaddr net.HardwareAddr
+	var err error
+	var eth layers.Ethernet
+	if s.socketFd <= 0 {
+		// First off, get the MAC address we should be sending packets to.
+		hwaddr, err = s.getHwAddr()
+		if err != nil {
+			return err
+		}
+		// Construct all the network layers we need.
+		eth = layers.Ethernet{
+			SrcMAC:       s.iface.HardwareAddr,
+			DstMAC:       hwaddr,
+			EthernetType: layers.EthernetTypeIPv4,
+		}
 	}
 	ip4 := layers.IPv4{
 		SrcIP:    s.src,
@@ -173,28 +176,83 @@ func (s *scanner) Scan() error {
 		if tcp.DstPort < 65535 {
 			tcp.DstPort++
 			log.V(5).Infof("src %v, dst %v, tcp.DstPort %v", s.src, s.dst, tcp.DstPort)
-			if err := s.send(&eth, &ip4, &tcp); err != nil {
+			if useListenPacket {
+				_ = eth
+				if err := s.rawNetSockSend(&tcp); err != nil {
+					log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
+				}
+				time.Sleep(100 * time.Microsecond)
+			} else if s.socketFd > 0 {
+				_ = eth
+				if err := s.rawSockSend(&ip4, &tcp); err != nil {
+					log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+				}
+				time.Sleep(100 * time.Microsecond)
+			} else if err := s.send(&eth, &ip4, &tcp); err != nil {
 				log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 			}
 		} else {
 			log.Infof("Scan reached port number %v, time: %v", tcp.DstPort, time.Now())
 			break
 		}
+
 	}
 	// We don't know exactly how long it'll take for packets to be
 	// sent back to us, but 5 seconds should be more than enough
 	// time ;)
 	time.Sleep(5 * time.Second)
-	log.Infof("Return from Scan, time: %v", time.Now())
+	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
 	return nil
 }
 
-// send sends the given layers as a single packet on the network.
+// pcap send sends the given layers as a single packet on the network.
 func (s *scanner) send(l ...gopacket.SerializableLayer) error {
 	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
 		return err
 	}
 	return s.handle.WritePacketData(s.buf.Bytes())
+}
+
+// Raw socket send
+func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
+	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
+		return err
+	}
+	packetData := s.buf.Bytes()
+
+	ip := []byte(s.dst)
+	var dstIp [4]byte
+	copy(dstIp[:], ip[:4])
+
+	addr := syscall.SockaddrInet4{
+		Port: 0,
+		Addr: dstIp,
+	}
+	err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
+	if err != nil {
+		log.Fatal("Sendto:", err)
+	}
+	return nil
+
+}
+
+// Raw socket send
+func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
+	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
+		return err
+	}
+
+	dstIPaddr := net.IPAddr{
+		IP: s.dst,
+	}
+
+	packetData := s.buf.Bytes()
+
+	_, err := s.ipConn.WriteTo(packetData, &dstIPaddr)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // readResponse watches a handle for incoming responses we might care about, and prints them.

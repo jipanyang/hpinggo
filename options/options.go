@@ -30,6 +30,7 @@ type Options struct {
 	DisplayIndent     string        // Indent per nesting level of result output.
 	DisplayPeer       bool          // Display the immediate connected peer.
 	Scan              string        // Ports range to scan
+	RawSocket         bool          // Use raw socket for sending packet when true
 
 	Interface string // Packet outgoing interface
 	// <empty string> - disable timestamp

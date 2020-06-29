@@ -64,6 +64,7 @@ func init() {
 	flag.BoolVar(&opt.Debug, "debug", false, "When set, hpinggo runs in debug mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "groups of ports to scan. ex. 1-1000,8888")
+	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.BoolVar(&opt.Verbose, "V", opt.Verbose, "Short for verbose.")
@@ -136,8 +137,11 @@ func main() {
 	}
 	log.Infof("To use addrs: %v\n", addrs)
 
-	fd := open_sockraw()
-	log.Infof("Opened raw socket: %v\n", fd)
+	fd := -1
+	if opt.RawSocket {
+		fd = open_sockraw()
+		log.Infof("Opened raw socket: %v\n", fd)
+	}
 	pcapHandle := open_pcap(opt.Interface)
 	log.Infof("Opened pcap: %v\n", pcapHandle)
 
@@ -156,7 +160,7 @@ func main() {
 		// Note:  newScanner creates and closes a pcap Handle once for
 		// every scan target.  We could do much better, were this not an
 		// example ;)
-		s, err := scanner.NewScanner(ip, pcapHandle, router)
+		s, err := scanner.NewScanner(ip, pcapHandle, fd, router)
 		if err != nil {
 			log.Errorf("unable to create scanner for %v: %v", ip, err)
 			continue
