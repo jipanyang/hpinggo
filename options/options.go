@@ -20,7 +20,7 @@ import (
 
 // Options is a type to hold parameters that affect how hpinggo generate and analyze packets
 type Options struct {
-	PollingInterval   time.Duration // Duration between polling events.
+	Interval          time.Duration // Duration between sending each packet.
 	StreamingDuration time.Duration // Duration to collect response, 0 is forever.
 	Count             uint          // Number of packets to generate, 0 is infinite.
 	RandDest          bool          // Enables the random destination mode
@@ -29,8 +29,8 @@ type Options struct {
 	DisplayPrefix     string        // Prefix for each line of result output.
 	DisplayIndent     string        // Indent per nesting level of result output.
 	DisplayPeer       bool          // Display the immediate connected peer.
-	Scan              string        // Ports range to scan
-	RawSocket         bool          // Use raw socket for sending packet when true
+
+	RawSocket bool // Use raw socket for sending packet when true
 
 	Interface string // Packet outgoing interface
 	// <empty string> - disable timestamp
@@ -41,4 +41,23 @@ type Options struct {
 	Ipv6      bool   // run in ipv6 mode
 	Verbose   bool   // verbose pring
 	Debug     bool   // debugging mode
+
+	// port groups are comma separated: a number describes just a single port,
+	// so 1,2,3 means port 1, 2 and 3. ranges are specified using a start-end notation,
+	// like 1-1000, that is to scan ports between 1 and 1000 (included).
+	// the special word all is an alias for 0-65535, while the special word known includes
+	// all the ports listed in /etc/services. Groups can be combined, so the following command
+	// line will scan ports between 1 and 1000 AND port 8888 AND ports listed in /etc/services
+	Scan string // Ports range to scan
+
+	// tcp options
+	TcpTimestamp bool // Enable the TCP timestamp option, and try to guess the timestamp update frequency and the remote system uptime.
+	fin          bool // Set FIN tcp flag
+	syn          bool // Set SYN tcp flag
+	rst          bool // Set RST tcp flag
+	push         bool // Set PUSH tcp flag
+	ack          bool // Set ACK tcp flag
+	urg          bool // Set URG tcp flag
+	xmas         bool // Set Xmas tcp flag
+	ymas         bool // Set Ymas tcp flag
 }

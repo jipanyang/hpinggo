@@ -12,10 +12,23 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/routing"
 	// "golang.org/x/sys/unix"
+	"github.com/jipanyang/hpinggo/options"
 )
 
-// net raw socket implementation, alternative to nix.IPPROTO_RAW
+const (
+	MaxPort      = 65535 // Maximum port number
+	MaxScanRetry = 3     // Maximum scan retry before getting response
+)
+
+// net raw socket implementation, alternative to unix.IPPROTO_RAW
 var useListenPacket = bool(false)
+
+type portinfo struct {
+	active   int       // writen by receiver, read by sender
+	retry    int       // For writer consumtion only.
+	sendTime time.Time // Writen by sender, read by receiver.
+	recvTime time.Time // for receiver consumtion only
+}
 
 // scanner handles scanning a single IP address.
 type scanner struct {
@@ -30,28 +43,36 @@ type scanner struct {
 
 	// opts and buf allow us to easily serialize packets in the send()
 	// method.
-	opts gopacket.SerializeOptions
-	buf  gopacket.SerializeBuffer
+	packetOpts gopacket.SerializeOptions
+	buf        gopacket.SerializeBuffer
+
+	// options specified at user command line
+	cmdOpts options.Options
+	// tracking scan data for each port, using array to avoid lock and simplify update
+	portScan         [MaxPort + 1]portinfo
+	averageLatencyNs int64 //average RTT for packets sent, in nanosecond
 }
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
-func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router) (*scanner, error) {
+func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router, opt options.Options) (*scanner, error) {
 	s := &scanner{
 		dst:      ip,
 		socketFd: fd,
-		opts: gopacket.SerializeOptions{
+		packetOpts: gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
 		},
-		buf: gopacket.NewSerializeBuffer(),
+		buf:              gopacket.NewSerializeBuffer(),
+		cmdOpts:          opt,
+		averageLatencyNs: 0,
 	}
 	// Figure out the route to the IP.
 	iface, gw, src, err := router.Route(ip)
 	if err != nil {
 		return nil, err
 	}
-	log.Infof("scanning ip %v with interface %v, gateway %v, src %v", ip, iface.Name, gw, src)
+	log.Infof("scanning ip %v with interface %v, gateway %v, src %v\n cmdOpts %+v", ip, iface.Name, gw, src, s.cmdOpts)
 	s.gw, s.src, s.iface = gw, src, iface
 
 	// Note we could very easily add some BPF filtering here to greatly
@@ -65,6 +86,13 @@ func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router) (
 			panic(err)
 		}
 		s.ipConn = ipConn
+	}
+	// TODO: support port number range
+	for port := 0; port <= MaxPort; port++ {
+		s.portScan[port] = portinfo{
+			active: 1,
+			retry:  MaxScanRetry,
+		}
 	}
 	return s, nil
 }
@@ -156,8 +184,8 @@ func (s *scanner) Scan() error {
 	}
 	tcp := layers.TCP{
 		SrcPort: 54321,
-		DstPort: 0, // will be incremented during the scan
-		SYN:     true,
+		DstPort: 0,    // will be incremented during the scan
+		SYN:     true, // TODO: populate TCP flags from cmdOpts
 	}
 	tcp.SetNetworkLayerForChecksum(&ip4)
 
@@ -167,47 +195,90 @@ func (s *scanner) Scan() error {
 
 	// Start up a goroutine to read in packet data.
 	stop := make(chan struct{})
-	go s.readResponse(s.handle, ipFlow, stop)
+	go s.receiver(s.handle, ipFlow, stop)
 	defer close(stop)
 	log.Infof("Start Scan, time: %v", time.Now())
+	retry := 0
+	recvd := 0
+
+	// TODO: split the function out as sender
+	interval := s.cmdOpts.Interval
 	for {
+		retry++
+		active := 0 // Number of active scanning port.
+
 		// Send one packet per loop iteration until we've sent packets
-		// to all of ports [1, 65535].
-		if tcp.DstPort < 65535 {
-			tcp.DstPort++
-			log.V(5).Infof("src %v, dst %v, tcp.DstPort %v", s.src, s.dst, tcp.DstPort)
-			if useListenPacket {
-				_ = eth
-				if err := s.rawNetSockSend(&tcp); err != nil {
-					log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
+		// to all of ports
+		for port, _ := range s.portScan {
+			if s.portScan[port].active > 0 && s.portScan[port].retry > 0 {
+				active++
+				s.portScan[port].retry--
+				tcp.DstPort = layers.TCPPort(port)
+				s.portScan[port].sendTime = time.Now()
+				if useListenPacket {
+					_ = eth
+					if err := s.rawNetSockSend(&tcp); err != nil {
+						log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
+					}
+				} else if s.socketFd > 0 {
+					_ = eth
+					if err := s.rawSockSend(&ip4, &tcp); err != nil {
+						log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+					}
+				} else if err := s.send(&eth, &ip4, &tcp); err != nil {
+					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 				}
-				time.Sleep(100 * time.Microsecond)
-			} else if s.socketFd > 0 {
-				_ = eth
-				if err := s.rawSockSend(&ip4, &tcp); err != nil {
-					log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
-				}
-				time.Sleep(100 * time.Microsecond)
-			} else if err := s.send(&eth, &ip4, &tcp); err != nil {
-				log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
+				time.Sleep(interval)
 			}
-		} else {
-			log.Infof("Scan reached port number %v, time: %v", tcp.DstPort, time.Now())
+		}
+
+		latency := time.Duration(s.averageLatencyNs) * time.Nanosecond
+		log.V(1).Infof("Average RTT %v", latency)
+		if retry > 4 {
+			if s.averageLatencyNs != 0 {
+				time.Sleep(100 * latency)
+			} else {
+				time.Sleep(1 * time.Second)
+			}
+		}
+		for port, _ := range s.portScan {
+			if s.portScan[port].active == 0 && s.portScan[port].retry > 0 {
+				recvd++
+			}
+		}
+		// No more active scanning
+		if active == 0 {
+			// Have not received any response
+			if recvd == 0 {
+				time.Sleep(1 * time.Second)
+			}
+			log.Infof("All replies received. Done.\n")
+
+			log.Infof("Not responding ports: ")
+			for port, _ := range s.portScan {
+				// Exhausted all reties, but no response
+				if s.portScan[port].active > 0 && s.portScan[port].retry == 0 {
+					// TODO: get known port name , port_to_name(port)
+					log.V(2).Infof("(%d) ", port)
+				}
+			}
 			break
 		}
 
+		// Are we sending too fast
+		if recvd == 0 || MaxScanRetry <= retry+2 {
+			interval *= 10
+			log.Infof("SLOWING DONW to interval %v", interval)
+		}
 	}
-	// We don't know exactly how long it'll take for packets to be
-	// sent back to us, but 5 seconds should be more than enough
-	// time ;)
-	time.Sleep(5 * time.Second)
+
 	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
 	return nil
 }
 
 // pcap send sends the given layers as a single packet on the network.
 func (s *scanner) send(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
+	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
 		return err
 	}
 	return s.handle.WritePacketData(s.buf.Bytes())
@@ -215,7 +286,7 @@ func (s *scanner) send(l ...gopacket.SerializableLayer) error {
 
 // Raw socket send
 func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
+	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
 		return err
 	}
 	packetData := s.buf.Bytes()
@@ -238,7 +309,7 @@ func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
 
 // Raw socket send
 func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.opts, l...); err != nil {
+	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
 		return err
 	}
 
@@ -255,13 +326,14 @@ func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
 	return nil
 }
 
-// readResponse watches a handle for incoming responses we might care about, and prints them.
+// receiver watches a handle for incoming responses we might care about, and prints them.
 //
-// readResponse loops until 'stop' is closed.
-func (s *scanner) readResponse(handle *pcap.Handle, netFlow gopacket.Flow, stop chan struct{}) {
+// receiver loops until 'stop' is closed.
+func (s *scanner) receiver(handle *pcap.Handle, netFlow gopacket.Flow, stop chan struct{}) {
 	src := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
 	in := src.Packets()
 
+	var recvCount int64 = 0
 	for {
 		var packet gopacket.Packet
 		select {
@@ -291,7 +363,19 @@ func (s *scanner) readResponse(handle *pcap.Handle, netFlow gopacket.Flow, stop 
 			} else if tcp.RST {
 				log.V(6).Infof("  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK {
+
+				if s.portScan[tcp.SrcPort].active == 0 {
+					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
+					continue
+				}
+				recvCount++
 				log.Infof("  port %v open", tcp.SrcPort)
+				s.portScan[tcp.SrcPort].active = 0
+				s.portScan[tcp.SrcPort].recvTime = time.Now()
+				//TODO: use float variable
+				latency := int64((s.portScan[tcp.SrcPort].recvTime.Sub(s.portScan[tcp.SrcPort].sendTime)) / time.Nanosecond)
+				s.averageLatencyNs = (s.averageLatencyNs*(recvCount-1) + latency) / recvCount
+
 			} else {
 				log.V(7).Infof("ignoring useless packet")
 			}

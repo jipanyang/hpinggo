@@ -51,7 +51,7 @@ var (
 
 func init() {
 	// Config command-line flags.
-	flag.DurationVar(&opt.PollingInterval, "polling_interval", 30*time.Second, "Interval at which to poll in seconds if polling is specified for query_type.")
+	flag.DurationVar(&opt.Interval, "interval", 1*time.Second, "Interval at which to send each packet.")
 	flag.UintVar(&opt.Count, "count", 0, "Number of polling/streaming events (0 is infinite).")
 	flag.StringVar(&opt.Delimiter, "delimiter", "/", "Delimiter between path nodes in query. Must be a single UTF-8 code point.")
 	flag.DurationVar(&opt.StreamingDuration, "streaming_duration", 0, "Length of time to collect streaming queries (0 is infinite).")
@@ -74,7 +74,7 @@ func init() {
 	flag.StringVar(&opt.Interface, "I", opt.Delimiter, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.StreamingDuration, "sd", opt.StreamingDuration, "Short for streaming_duration.")
-	flag.DurationVar(&opt.PollingInterval, "pi", opt.PollingInterval, "Short for polling_interval.")
+	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
 	flag.StringVar(targetName, "B", *targetName, "Short for target_name.")
 }
 
@@ -160,7 +160,7 @@ func main() {
 		// Note:  newScanner creates and closes a pcap Handle once for
 		// every scan target.  We could do much better, were this not an
 		// example ;)
-		s, err := scanner.NewScanner(ip, pcapHandle, fd, router)
+		s, err := scanner.NewScanner(ip, pcapHandle, fd, router, opt)
 		if err != nil {
 			log.Errorf("unable to create scanner for %v: %v", ip, err)
 			continue
