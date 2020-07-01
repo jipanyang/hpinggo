@@ -2,8 +2,10 @@ package scanner
 
 import (
 	"errors"
+	"fmt"
 	log "github.com/golang/glog"
 	"net"
+	"os"
 	"syscall"
 	"time"
 
@@ -17,7 +19,7 @@ import (
 
 const (
 	MaxPort      = 65535 // Maximum port number
-	MaxScanRetry = 3     // Maximum scan retry before getting response
+	MaxScanRetry = 2     // Maximum scan retry before getting response
 )
 
 // net raw socket implementation, alternative to unix.IPPROTO_RAW
@@ -252,16 +254,17 @@ func (s *scanner) Scan() error {
 			if recvd == 0 {
 				time.Sleep(1 * time.Second)
 			}
-			log.Infof("All replies received. Done.\n")
+			fmt.Fprintf(os.Stderr, "All replies received. Done.\n")
 
-			log.Infof("Not responding ports: ")
+			fmt.Fprintf(os.Stderr, "Not responding ports: ")
 			for port, _ := range s.portScan {
 				// Exhausted all reties, but no response
 				if s.portScan[port].active > 0 && s.portScan[port].retry == 0 {
 					// TODO: get known port name , port_to_name(port)
-					log.V(2).Infof("(%d) ", port)
+					fmt.Fprintf(os.Stderr, "(%d) ", port)
 				}
 			}
+			fmt.Fprintf(os.Stderr, "\n")
 			break
 		}
 
@@ -330,8 +333,17 @@ func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
 //
 // receiver loops until 'stop' is closed.
 func (s *scanner) receiver(handle *pcap.Handle, netFlow gopacket.Flow, stop chan struct{}) {
-	src := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
-	in := src.Packets()
+	// Add basic src and dst bpf filter, should be applicable to both IPv4 and IPv6
+	src, dst := netFlow.Endpoints()
+	bpffilter := fmt.Sprintf("src %v and dst %v", src, dst)
+	fmt.Fprintf(os.Stderr, "Using BPF filter %q\n", bpffilter)
+	log.V(2).Infof("  Using BPF filter %q\n", bpffilter)
+
+	if err := handle.SetBPFFilter(bpffilter); err != nil {
+		log.Exitf("SetBPFFilter: %v\n", err)
+	}
+	packetSrc := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	in := packetSrc.Packets()
 
 	var recvCount int64 = 0
 	for {
@@ -341,13 +353,8 @@ func (s *scanner) receiver(handle *pcap.Handle, netFlow gopacket.Flow, stop chan
 			return
 		case packet = <-in:
 			net := packet.NetworkLayer()
-			if net == nil {
-				log.V(6).Infof("packet has no network layer")
-				continue
-			}
-			if net.NetworkFlow() != netFlow {
-				log.V(6).Infof("packet does not match our ip src/dst")
-				continue
+			if net == nil || net.NetworkFlow() != netFlow {
+				panic("packet has no network layer")
 			}
 			tcpLayer := packet.Layer(layers.LayerTypeTCP)
 			if tcpLayer == nil {
@@ -369,7 +376,7 @@ func (s *scanner) receiver(handle *pcap.Handle, netFlow gopacket.Flow, stop chan
 					continue
 				}
 				recvCount++
-				log.Infof("  port %v open", tcp.SrcPort)
+				fmt.Fprintf(os.Stderr, "  port %v open\n", tcp.SrcPort)
 				s.portScan[tcp.SrcPort].active = 0
 				s.portScan[tcp.SrcPort].recvTime = time.Now()
 				//TODO: use float variable

@@ -14,7 +14,7 @@ limitations under the License.
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
 // usage:
-// hpinggo -- \
+// sudo hpinggo -target www.google.com  -I wlp3s0  -i 1us -logtostderr=true \
 // ....       \
 // ....
 
@@ -46,7 +46,7 @@ var (
 		os.Stdout.Write(append(b, '\n'))
 	}}
 
-	targetName = flag.String("target_name", "", "Name of remote target for the packets")
+	target = flag.String("target", "", "Name of remote target for the packets")
 )
 
 func init() {
@@ -54,28 +54,21 @@ func init() {
 	flag.DurationVar(&opt.Interval, "interval", 1*time.Second, "Interval at which to send each packet.")
 	flag.UintVar(&opt.Count, "count", 0, "Number of polling/streaming events (0 is infinite).")
 	flag.StringVar(&opt.Delimiter, "delimiter", "/", "Delimiter between path nodes in query. Must be a single UTF-8 code point.")
-	flag.DurationVar(&opt.StreamingDuration, "streaming_duration", 0, "Length of time to collect streaming queries (0 is infinite).")
 	flag.StringVar(&opt.DisplayPrefix, "display_prefix", "", "Per output line prefix.")
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.BoolVar(&opt.RandDest, "rand-dest", false, "Enables the random destination mode")
 	flag.BoolVar(&opt.Ipv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
-	flag.BoolVar(&opt.Verbose, "verbose", false, "When set, hpinggo runs in noisy mode")
-	flag.BoolVar(&opt.Debug, "debug", false, "When set, hpinggo runs in debug mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
 	// Shortcut flags that can be used in place of the longform flags above.
-	flag.BoolVar(&opt.Verbose, "V", opt.Verbose, "Short for verbose.")
-	flag.BoolVar(&opt.Debug, "D", opt.Debug, "Short for debug.")
 	flag.UintVar(&opt.Count, "c", opt.Count, "Short for count.")
 	flag.StringVar(&opt.Delimiter, "d", opt.Delimiter, "Short for delimiter.")
 	flag.StringVar(&opt.Interface, "I", opt.Delimiter, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
-	flag.DurationVar(&opt.StreamingDuration, "sd", opt.StreamingDuration, "Short for streaming_duration.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
-	flag.StringVar(targetName, "B", *targetName, "Short for target_name.")
 }
 
 func main() {
@@ -92,24 +85,20 @@ func main() {
 
 	var ips []net.IP
 
-	if opt.Verbose {
-		log.Infof("Verbose mode enabled. Time %v\n", time.Now())
-	}
-
 	// Get remote target addresses
 	if !opt.RandDest {
-		if *targetName == "" {
+		if *target == "" {
 			log.Exitf("Remote target missing\n")
 		}
 
 		var err error
-		ips, err = net.LookupIP(*targetName)
+		ips, err = net.LookupIP(*target)
 		if err != nil {
 			log.Exitf("Could not get IPs: %v\n", err)
 		}
 	}
 	for _, ip := range ips {
-		log.Infof("%s IN A %s\n", *targetName, ip.String())
+		log.Infof("%s IN A %s\n", *target, ip.String())
 	}
 
 	// Get local addresses
@@ -145,7 +134,7 @@ func main() {
 	pcapHandle := open_pcap(opt.Interface)
 	log.Infof("Opened pcap: %v\n", pcapHandle)
 
-	displayOptions(ctx)
+	displayOptions(ctx, opt)
 
 	defer util.Run()()
 	router, err := routing.New()
@@ -173,8 +162,8 @@ func main() {
 
 }
 
-func displayOptions(ctx context.Context) error {
-	opt.Display([]byte("test only"))
+func displayOptions(ctx context.Context, opt options.Options) error {
+	log.Infof("options: %v", opt)
 	return nil
 }
 

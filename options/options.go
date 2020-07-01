@@ -15,20 +15,20 @@ limitations under the License.
 package options
 
 import (
+	"fmt"
 	"time"
 )
 
 // Options is a type to hold parameters that affect how hpinggo generate and analyze packets
 type Options struct {
-	Interval          time.Duration // Duration between sending each packet.
-	StreamingDuration time.Duration // Duration to collect response, 0 is forever.
-	Count             uint          // Number of packets to generate, 0 is infinite.
-	RandDest          bool          // Enables the random destination mode
-	Delimiter         string        // Delimiter between path elements when converted to string.
-	Display           func([]byte)  // Function called to display each result.
-	DisplayPrefix     string        // Prefix for each line of result output.
-	DisplayIndent     string        // Indent per nesting level of result output.
-	DisplayPeer       bool          // Display the immediate connected peer.
+	Interval      time.Duration // Interval between sending each packet.
+	Count         uint          // Number of packets to generate, 0 is infinite.
+	RandDest      bool          // Enables the random destination mode
+	Delimiter     string        // Delimiter between path elements when converted to string.
+	Display       func([]byte)  // Function called to display each result.
+	DisplayPrefix string        // Prefix for each line of result output.
+	DisplayIndent string        // Indent per nesting level of result output.
+	DisplayPeer   bool          // Display the immediate connected peer.
 
 	RawSocket bool // Use raw socket for sending packet when true
 
@@ -39,8 +39,6 @@ type Options struct {
 	// <FORMAT> - human readable timestamp according to <FORMAT>
 	Timestamp string // Formatting of timestamp in result output.
 	Ipv6      bool   // run in ipv6 mode
-	Verbose   bool   // verbose pring
-	Debug     bool   // debugging mode
 
 	// port groups are comma separated: a number describes just a single port,
 	// so 1,2,3 means port 1, 2 and 3. ranges are specified using a start-end notation,
@@ -60,4 +58,10 @@ type Options struct {
 	urg          bool // Set URG tcp flag
 	xmas         bool // Set Xmas tcp flag
 	ymas         bool // Set Ymas tcp flag
+}
+
+// TODO: display all parsed options
+// Implementing Stringer interface
+func (opt Options) String() string {
+	return fmt.Sprintf("Interval %v", opt.Interval)
 }
