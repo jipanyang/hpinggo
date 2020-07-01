@@ -6,6 +6,8 @@ import (
 	log "github.com/golang/glog"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,7 +28,7 @@ const (
 var useListenPacket = bool(false)
 
 type portinfo struct {
-	active   int       // writen by receiver, read by sender
+	active   bool      // writen by receiver, read by sender
 	retry    int       // For writer consumtion only.
 	sendTime time.Time // Writen by sender, read by receiver.
 	recvTime time.Time // for receiver consumtion only
@@ -50,8 +52,8 @@ type scanner struct {
 
 	// options specified at user command line
 	cmdOpts options.Options
-	// tracking scan data for each port, using array to avoid lock and simplify update
-	portScan         [MaxPort + 1]portinfo
+	// tracking scan data for each port
+	portScan         []portinfo
 	averageLatencyNs int64 //average RTT for packets sent, in nanosecond
 }
 
@@ -65,8 +67,10 @@ func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router, o
 			FixLengths:       true,
 			ComputeChecksums: true,
 		},
-		buf:              gopacket.NewSerializeBuffer(),
-		cmdOpts:          opt,
+		buf:     gopacket.NewSerializeBuffer(),
+		cmdOpts: opt,
+		// Cover all ports possible to avoid lock and simplify update
+		portScan:         make([]portinfo, MaxPort+1),
 		averageLatencyNs: 0,
 	}
 	// Figure out the route to the IP.
@@ -92,11 +96,70 @@ func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router, o
 	// TODO: support port number range
 	for port := 0; port <= MaxPort; port++ {
 		s.portScan[port] = portinfo{
-			active: 1,
+			active: false,
 			retry:  MaxScanRetry,
 		}
 	}
+	s.parsePorts(opt.Scan)
+	for port := 0; port <= MaxPort; port++ {
+		if !s.portScan[port].active {
+			s.portScan[port].retry = 0
+		}
+	}
+
 	return s, nil
+}
+
+func (s *scanner) parsePorts(ports string) {
+	// , is the deliminator
+	portsRanges := strings.Split(ports, ",")
+	for _, subPortStr := range portsRanges {
+		neg := false
+		if len(subPortStr) < 1 {
+			log.Exitf("Invalid scan ports range: %v\n", ports)
+		}
+		if subPortStr[0] == '!' {
+			neg = true
+			subPortStr = subPortStr[1:]
+		}
+
+		if strings.Contains(subPortStr, "-") {
+			subRanges := strings.Split(subPortStr, "-")
+			if len(subRanges) != 2 {
+				log.Exitf("Invalid scan ports range: %v\n", ports)
+			}
+
+			low, err := strconv.Atoi(subRanges[0])
+			if err != nil {
+				log.Exitf("Invalid scan ports range: %v, %v\n", ports, err)
+			}
+			high, err := strconv.Atoi(subRanges[1])
+			if err != nil {
+				log.Exitf("Invalid scan ports range: %v, %v\n", ports, err)
+			}
+			if low > high {
+				low, high = high, low
+			}
+			// Not checking boundary, if not withing 0-65535, just crash
+			for ; low <= high; low++ {
+				s.portScan[low].active = !neg
+			}
+		} else if strings.Contains(subPortStr, "all") {
+			for port := 0; port <= MaxPort; port++ {
+				s.portScan[port].active = !neg
+			}
+		} else if strings.Contains(subPortStr, "known") {
+			for port, _ := range layers.TCPPortNames {
+				s.portScan[port].active = !neg
+			}
+		} else { // a single port
+			port, err := strconv.Atoi(subPortStr)
+			if err != nil {
+				log.Exitf("Invalid scan ports range: %v, %v\n", ports, err)
+			}
+			s.portScan[port].active = !neg
+		}
+	}
 }
 
 func (s *scanner) Close() {
@@ -212,13 +275,13 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 	interval := s.cmdOpts.Interval
 	for {
 		retry++
-		active := 0 // Number of active scanning port.
+		activePorts := 0 // Number of active scanning port.
 
 		// Send one packet per loop iteration until we've sent packets
 		// to all of ports
 		for port, _ := range s.portScan {
-			if s.portScan[port].active > 0 && s.portScan[port].retry > 0 {
-				active++
+			if s.portScan[port].active && s.portScan[port].retry > 0 {
+				activePorts++
 				s.portScan[port].retry--
 				tcp.DstPort = layers.TCPPort(port)
 				s.portScan[port].sendTime = time.Now()
@@ -249,12 +312,12 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 			}
 		}
 		for port, _ := range s.portScan {
-			if s.portScan[port].active == 0 && s.portScan[port].retry > 0 {
+			if !s.portScan[port].active && s.portScan[port].retry > 0 {
 				recvd++
 			}
 		}
 		// No more active scanning
-		if active == 0 {
+		if activePorts == 0 {
 			// Have not received any response
 			if recvd == 0 {
 				time.Sleep(1 * time.Second)
@@ -264,9 +327,9 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 			fmt.Fprintf(os.Stderr, "Not responding ports: ")
 			for port, _ := range s.portScan {
 				// Exhausted all reties, but no response
-				if s.portScan[port].active > 0 && s.portScan[port].retry == 0 {
+				if s.portScan[port].active && s.portScan[port].retry == 0 {
 					// TODO: get known port name , port_to_name(port)
-					fmt.Fprintf(os.Stderr, "(%d) ", port)
+					fmt.Fprintf(os.Stderr, "(%v) ", layers.TCPPort(port))
 				}
 			}
 			fmt.Fprintf(os.Stderr, "\n")
@@ -373,13 +436,13 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 				log.V(6).Infof("  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK {
 
-				if s.portScan[tcp.SrcPort].active == 0 {
+				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
 					continue
 				}
 				recvCount++
 				fmt.Fprintf(os.Stderr, "  port %v open\n", tcp.SrcPort)
-				s.portScan[tcp.SrcPort].active = 0
+				s.portScan[tcp.SrcPort].active = false
 				s.portScan[tcp.SrcPort].recvTime = time.Now()
 				//TODO: use float variable
 				latency := int64((s.portScan[tcp.SrcPort].recvTime.Sub(s.portScan[tcp.SrcPort].sendTime)) / time.Nanosecond)

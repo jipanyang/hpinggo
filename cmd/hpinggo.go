@@ -14,9 +14,9 @@ limitations under the License.
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
 // usage:
-// sudo hpinggo -target www.google.com  -I wlp3s0  -i 1us -logtostderr=true \
-// ....       \
-// ....
+// sudo hpinggo -target www.google.com  -scan '0-70,80,443' -I wlp3s0  -i 1us -logtostderr=true
+// sudo hpinggo -target www.google.com  -scan 'all' -I wlp3s0  -i 1us
+// sudo hpinggo -target www.google.com  -scan 'known' -I wlp3s0  -i 1us
 
 package main
 
@@ -60,7 +60,7 @@ func init() {
 	flag.BoolVar(&opt.RandDest, "rand-dest", false, "Enables the random destination mode")
 	flag.BoolVar(&opt.Ipv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
-	flag.StringVar(&opt.Scan, "scan", "", "groups of ports to scan. ex. 1-1000,8888")
+	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
 	// Shortcut flags that can be used in place of the longform flags above.
@@ -69,6 +69,7 @@ func init() {
 	flag.StringVar(&opt.Interface, "I", opt.Delimiter, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
+	flag.StringVar(&opt.Scan, "8", opt.Scan, "Short for scan.")
 }
 
 func main() {
