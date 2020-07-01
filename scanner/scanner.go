@@ -197,13 +197,18 @@ func (s *scanner) Scan() error {
 
 	// Start up a goroutine to read in packet data.
 	stop := make(chan struct{})
-	go s.receiver(s.handle, ipFlow, stop)
+	go s.receiver(ipFlow, stop)
 	defer close(stop)
 	log.Infof("Start Scan, time: %v", time.Now())
+	s.sender(&eth, &ip4, &tcp)
+
+	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
+	return nil
+}
+
+func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP) {
 	retry := 0
 	recvd := 0
-
-	// TODO: split the function out as sender
 	interval := s.cmdOpts.Interval
 	for {
 		retry++
@@ -219,15 +224,15 @@ func (s *scanner) Scan() error {
 				s.portScan[port].sendTime = time.Now()
 				if useListenPacket {
 					_ = eth
-					if err := s.rawNetSockSend(&tcp); err != nil {
+					if err := s.rawNetSockSend(tcp); err != nil {
 						log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
 					}
 				} else if s.socketFd > 0 {
 					_ = eth
-					if err := s.rawSockSend(&ip4, &tcp); err != nil {
+					if err := s.rawSockSend(ip4, tcp); err != nil {
 						log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
 					}
-				} else if err := s.send(&eth, &ip4, &tcp); err != nil {
+				} else if err := s.send(eth, ip4, tcp); err != nil {
 					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 				}
 				time.Sleep(interval)
@@ -274,9 +279,6 @@ func (s *scanner) Scan() error {
 			log.Infof("SLOWING DONW to interval %v", interval)
 		}
 	}
-
-	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
-	return nil
 }
 
 // pcap send sends the given layers as a single packet on the network.
@@ -332,17 +334,17 @@ func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
 // receiver watches a handle for incoming responses we might care about, and prints them.
 //
 // receiver loops until 'stop' is closed.
-func (s *scanner) receiver(handle *pcap.Handle, netFlow gopacket.Flow, stop chan struct{}) {
+func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 	// Add basic src and dst bpf filter, should be applicable to both IPv4 and IPv6
 	src, dst := netFlow.Endpoints()
 	bpffilter := fmt.Sprintf("src %v and dst %v", src, dst)
 	fmt.Fprintf(os.Stderr, "Using BPF filter %q\n", bpffilter)
 	log.V(2).Infof("  Using BPF filter %q\n", bpffilter)
 
-	if err := handle.SetBPFFilter(bpffilter); err != nil {
+	if err := s.handle.SetBPFFilter(bpffilter); err != nil {
 		log.Exitf("SetBPFFilter: %v\n", err)
 	}
-	packetSrc := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	packetSrc := gopacket.NewPacketSource(s.handle, layers.LayerTypeEthernet)
 	in := packetSrc.Packets()
 
 	var recvCount int64 = 0
