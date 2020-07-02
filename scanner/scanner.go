@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	log "github.com/golang/glog"
@@ -36,6 +37,8 @@ type portinfo struct {
 
 // scanner handles scanning a single IP address.
 type scanner struct {
+	ctx context.Context
+
 	// iface is the interface to send packets on.
 	iface *net.Interface
 	// destination, gateway (if applicable), and source IP addresses to use.
@@ -59,8 +62,9 @@ type scanner struct {
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
-func NewScanner(ip net.IP, handle *pcap.Handle, fd int, router routing.Router, opt options.Options) (*scanner, error) {
+func NewScanner(ctxParent context.Context, ip net.IP, handle *pcap.Handle, fd int, router routing.Router, opt options.Options) (*scanner, error) {
 	s := &scanner{
+		ctx:      ctxParent,
 		dst:      ip,
 		socketFd: fd,
 		packetOpts: gopacket.SerializeOptions{
@@ -271,11 +275,11 @@ func (s *scanner) Scan() error {
 
 func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP) {
 	retry := 0
-	recvd := 0
 	interval := s.cmdOpts.Interval
 	for {
 		retry++
 		activePorts := 0 // Number of active scanning port.
+		recvd := 0
 
 		// Send one packet per loop iteration until we've sent packets
 		// to all of ports
@@ -298,7 +302,14 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 				} else if err := s.send(eth, ip4, tcp); err != nil {
 					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 				}
-				time.Sleep(interval)
+				select {
+				case <-time.After(interval):
+					continue
+				case <-s.ctx.Done():
+					fmt.Fprintf(os.Stderr, "Asked to terminiate early \n")
+					return
+				}
+
 			}
 		}
 
@@ -322,8 +333,8 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 			if recvd == 0 {
 				time.Sleep(1 * time.Second)
 			}
+			log.Infof("Finish Scan, time: %v", time.Now())
 			fmt.Fprintf(os.Stderr, "All replies received. Done.\n")
-
 			fmt.Fprintf(os.Stderr, "Not responding ports: ")
 			for port, _ := range s.portScan {
 				// Exhausted all reties, but no response
@@ -332,7 +343,7 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 					fmt.Fprintf(os.Stderr, "(%v) ", layers.TCPPort(port))
 				}
 			}
-			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Fprintf(os.Stderr, "\n\n")
 			break
 		}
 
@@ -401,8 +412,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 	// Add basic src and dst bpf filter, should be applicable to both IPv4 and IPv6
 	src, dst := netFlow.Endpoints()
 	bpffilter := fmt.Sprintf("src %v and dst %v", src, dst)
-	fmt.Fprintf(os.Stderr, "Using BPF filter %q\n", bpffilter)
-	log.V(2).Infof("  Using BPF filter %q\n", bpffilter)
+	log.Infof("Using BPF filter %q\n", bpffilter)
 
 	if err := s.handle.SetBPFFilter(bpffilter); err != nil {
 		log.Exitf("SetBPFFilter: %v\n", err)
@@ -435,7 +445,6 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 			} else if tcp.RST {
 				log.V(6).Infof("  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK {
-
 				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
 					continue

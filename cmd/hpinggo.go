@@ -16,13 +16,14 @@ limitations under the License.
 // usage:
 // sudo hpinggo -target www.google.com  -scan '0-70,80,443' -I wlp3s0  -i 1us -logtostderr=true
 // sudo hpinggo -target www.google.com  -scan 'all' -I wlp3s0  -i 1us
-// sudo hpinggo -target www.google.com  -scan 'known' -I wlp3s0  -i 1us
+// sudo hpinggo -target www.google.com  -scan 'known,!80' -I wlp3s0  -i 1us
 
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -79,7 +80,7 @@ func main() {
 	// Terminate on Ctrl+C.
 	go func() {
 		c := make(chan os.Signal, 1)
-		signal.Notify(c, os.Interrupt)
+		signal.Notify(c, os.Interrupt, os.Kill)
 		<-c
 		cancel()
 	}()
@@ -144,13 +145,12 @@ func main() {
 	}
 	for idx, ip := range ips {
 		if ip = ip.To4(); ip == nil {
-			log.Infof("non-ipv4: %v", ips[idx])
+			fmt.Fprintf(os.Stderr, "non-ipv4: %v\n", ips[idx])
 			continue
 		}
-		// Note:  newScanner creates and closes a pcap Handle once for
-		// every scan target.  We could do much better, were this not an
-		// example ;)
-		s, err := scanner.NewScanner(ip, pcapHandle, fd, router, opt)
+
+		fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
+		s, err := scanner.NewScanner(ctx, ip, pcapHandle, fd, router, opt)
 		if err != nil {
 			log.Errorf("unable to create scanner for %v: %v", ip, err)
 			continue
@@ -159,6 +159,13 @@ func main() {
 			log.Errorf("unable to scan %v: %v", ip, err)
 		}
 		s.Close()
+
+		select {
+		case <-time.After(1 * time.Second):
+			continue
+		case <-ctx.Done():
+			return
+		}
 	}
 
 }
