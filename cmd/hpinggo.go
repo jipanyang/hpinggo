@@ -14,9 +14,9 @@ limitations under the License.
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
 // usage:
-// sudo hpinggo -target www.google.com  -scan '0-70,80,443' -I wlp3s0  -i 1us -logtostderr=true
 // sudo hpinggo -target www.google.com  -scan 'all' -I wlp3s0  -i 1us
-// sudo hpinggo -target www.google.com  -scan 'known,!80' -I wlp3s0  -i 1us
+// sudo hpinggo -target www.google.com  -scan 'known,!80' -I wlp3s0  -i 1ms
+// sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -logtostderr
 
 package main
 
@@ -32,7 +32,6 @@ import (
 
 	log "github.com/golang/glog"
 	"github.com/google/gopacket/examples/util"
-	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/routing"
 	"github.com/jipanyang/hpinggo/options"
 	"github.com/jipanyang/hpinggo/scanner"
@@ -133,8 +132,6 @@ func main() {
 		fd = open_sockraw()
 		log.Infof("Opened raw socket: %v\n", fd)
 	}
-	pcapHandle := open_pcap(opt.Interface)
-	log.Infof("Opened pcap: %v\n", pcapHandle)
 
 	displayOptions(ctx, opt)
 
@@ -143,6 +140,7 @@ func main() {
 	if err != nil {
 		log.Fatal("routing error:", err)
 	}
+
 	for idx, ip := range ips {
 		if ip = ip.To4(); ip == nil {
 			fmt.Fprintf(os.Stderr, "non-ipv4: %v\n", ips[idx])
@@ -150,7 +148,7 @@ func main() {
 		}
 
 		fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
-		s, err := scanner.NewScanner(ctx, ip, pcapHandle, fd, router, opt)
+		s, err := scanner.NewScanner(ctx, ip, fd, router, opt)
 		if err != nil {
 			log.Errorf("unable to create scanner for %v: %v", ip, err)
 			continue
@@ -194,13 +192,4 @@ func open_sockraw() int {
 		log.Exitf("error enabling IP_HDRINCL: %v\n", err)
 	}
 	return fd
-}
-
-func open_pcap(ifName string) *pcap.Handle {
-	// Open up a pcap handle for packet reads.
-	handle, err := pcap.OpenLive(ifName, 65536, true, pcap.BlockForever)
-	if err != nil {
-		log.Exitf("error creating a pcap handle: %v\n", err)
-	}
-	return handle
 }

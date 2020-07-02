@@ -62,7 +62,7 @@ type scanner struct {
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
-func NewScanner(ctxParent context.Context, ip net.IP, handle *pcap.Handle, fd int, router routing.Router, opt options.Options) (*scanner, error) {
+func NewScanner(ctxParent context.Context, ip net.IP, fd int, router routing.Router, opt options.Options) (*scanner, error) {
 	s := &scanner{
 		ctx:      ctxParent,
 		dst:      ip,
@@ -85,11 +85,6 @@ func NewScanner(ctxParent context.Context, ip net.IP, handle *pcap.Handle, fd in
 	log.Infof("scanning ip %v with interface %v, gateway %v, src %v\n cmdOpts %+v", ip, iface.Name, gw, src, s.cmdOpts)
 	s.gw, s.src, s.iface = gw, src, iface
 
-	// Note we could very easily add some BPF filtering here to greatly
-	// decrease the number of packets we have to look at when getting back
-	// scan results.
-	s.handle = handle
-
 	if useListenPacket {
 		ipConn, err := net.ListenPacket("ip4:tcp", "0.0.0.0")
 		if err != nil {
@@ -97,7 +92,7 @@ func NewScanner(ctxParent context.Context, ip net.IP, handle *pcap.Handle, fd in
 		}
 		s.ipConn = ipConn
 	}
-	// TODO: support port number range
+
 	for port := 0; port <= MaxPort; port++ {
 		s.portScan[port] = portinfo{
 			active: false,
@@ -110,6 +105,8 @@ func NewScanner(ctxParent context.Context, ip net.IP, handle *pcap.Handle, fd in
 			s.portScan[port].retry = 0
 		}
 	}
+
+	s.open_pcap()
 
 	return s, nil
 }
@@ -166,9 +163,34 @@ func (s *scanner) parsePorts(ports string) {
 	}
 }
 
+func (s *scanner) open_pcap() {
+
+	var ifName string
+	// Note we could very easily add some BPF filtering here to greatly
+	// decrease the number of packets we have to look at when getting back
+	// scan results.
+	if s.cmdOpts.Interface != "" {
+		ifName = s.cmdOpts.Interface
+	} else {
+		ifName = s.iface.Name
+	}
+
+	// Open up a pcap handle for packet reads.
+	handle, err := pcap.OpenLive(ifName, 65536, true, pcap.BlockForever)
+	if err != nil {
+		log.Exitf("error creating a pcap handle: %v\n", err)
+	}
+	log.Infof("Opened pcap handle %+v", handle)
+	s.handle = handle
+}
+
 func (s *scanner) Close() {
-	// handle not owned by scanner
-	// s.handle.Close()
+	// remove the filter to get any packet to get out of handle.getNextBufPtrLocked()
+	// Otherwise pcap handle will wait for packet which matches the filter.
+	if err := s.handle.SetBPFFilter(""); err != nil {
+		log.Exitf("SetBPFFilter: %v\n", err)
+	}
+	s.handle.Close()
 }
 
 // getHwAddr is a hacky but effective way to get the destination hardware
@@ -417,6 +439,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 	if err := s.handle.SetBPFFilter(bpffilter); err != nil {
 		log.Exitf("SetBPFFilter: %v\n", err)
 	}
+
 	packetSrc := gopacket.NewPacketSource(s.handle, layers.LayerTypeEthernet)
 	in := packetSrc.Packets()
 
