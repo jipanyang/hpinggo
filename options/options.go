@@ -63,5 +63,5 @@ type Options struct {
 // TODO: display all parsed options
 // Implementing Stringer interface
 func (opt Options) String() string {
-	return fmt.Sprintf("Interval %v", opt.Interval)
+	return fmt.Sprintf("Interval: %v, Interface: %v", opt.Interval, opt.Interface)
 }

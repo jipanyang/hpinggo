@@ -253,6 +253,9 @@ func (s *scanner) Scan() error {
 	var hwaddr net.HardwareAddr
 	var err error
 	var eth layers.Ethernet
+
+	// If pcap handle is to be used for sending packets, ether layer info should be populated.
+	// TODO: keep one sending channel only, remove the others after evaluation
 	if s.socketFd <= 0 {
 		// First off, get the MAC address we should be sending packets to.
 		hwaddr, err = s.getHwAddr()

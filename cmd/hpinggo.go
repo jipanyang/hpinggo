@@ -14,8 +14,8 @@ limitations under the License.
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
 // usage:
-// sudo hpinggo -target www.google.com  -scan 'all' -I wlp3s0  -i 1us
-// sudo hpinggo -target www.google.com  -scan 'known,!80' -I wlp3s0  -i 1ms
+// sudo hpinggo -target www.google.com  -scan 'all' -i 1us
+// sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -logtostderr
 
 package main
@@ -53,7 +53,6 @@ func init() {
 	// Config command-line flags.
 	flag.DurationVar(&opt.Interval, "interval", 1*time.Second, "Interval at which to send each packet.")
 	flag.UintVar(&opt.Count, "count", 0, "Number of polling/streaming events (0 is infinite).")
-	flag.StringVar(&opt.Delimiter, "delimiter", "/", "Delimiter between path nodes in query. Must be a single UTF-8 code point.")
 	flag.StringVar(&opt.DisplayPrefix, "display_prefix", "", "Per output line prefix.")
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
@@ -65,8 +64,7 @@ func init() {
 
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.UintVar(&opt.Count, "c", opt.Count, "Short for count.")
-	flag.StringVar(&opt.Delimiter, "d", opt.Delimiter, "Short for delimiter.")
-	flag.StringVar(&opt.Interface, "I", opt.Delimiter, "Short for interface.")
+	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
 	flag.StringVar(&opt.Scan, "8", opt.Scan, "Short for scan.")
