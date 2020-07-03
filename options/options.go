@@ -108,5 +108,5 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, TcpFlags: %v", opt.Interval, opt.Interface, tcpFlags)
+	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v", opt.Interval, opt.Interface, opt.Ipv6, tcpFlags)
 }

@@ -62,7 +62,7 @@ type scanner struct {
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
-func NewScanner(ctxParent context.Context, ip net.IP, fd int, router routing.Router, opt options.Options) (*scanner, error) {
+func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (*scanner, error) {
 	s := &scanner{
 		ctx:      ctxParent,
 		dst:      ip,
@@ -78,6 +78,11 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, router routing.Rou
 		averageLatencyNs: 0,
 	}
 	// Figure out the route to the IP.
+	// TODO: gopacket router will crash if no default ipv6 route  available, fix it.
+	router, err := routing.New()
+	if err != nil {
+		log.Fatal("routing error:", err)
+	}
 	iface, gw, src, err := router.Route(ip)
 	if err != nil {
 		return nil, err
@@ -86,7 +91,15 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, router routing.Rou
 	s.gw, s.src, s.iface = gw, src, iface
 
 	if useListenPacket {
-		ipConn, err := net.ListenPacket("ip4:tcp", "0.0.0.0")
+		var ipConn net.PacketConn
+		var err error
+
+		if s.cmdOpts.Ipv6 {
+			ipConn, err = net.ListenPacket("ip6:tcp", "::")
+		} else {
+			ipConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
+		}
+
 		if err != nil {
 			panic(err)
 		}
@@ -259,20 +272,18 @@ func (s *scanner) Scan() error {
 		if err != nil {
 			return err
 		}
+		var ethType layers.EthernetType = layers.EthernetTypeIPv4
+		if s.cmdOpts.Ipv6 {
+			ethType = layers.EthernetTypeIPv6
+		}
 		// Construct all the network layers we need.
 		eth = layers.Ethernet{
 			SrcMAC:       s.iface.HardwareAddr,
 			DstMAC:       hwaddr,
-			EthernetType: layers.EthernetTypeIPv4,
+			EthernetType: ethType,
 		}
 	}
-	ip4 := layers.IPv4{
-		SrcIP:    s.src,
-		DstIP:    s.dst,
-		Version:  4,
-		TTL:      64,
-		Protocol: layers.IPProtocolTCP,
-	}
+
 	tcp := layers.TCP{
 		SrcPort: 54321,
 		DstPort: 0, // will be incremented during the scan
@@ -286,26 +297,58 @@ func (s *scanner) Scan() error {
 		CWR:     s.cmdOpts.TcpCwr,
 		NS:      s.cmdOpts.TcpNs,
 	}
-	tcp.SetNetworkLayerForChecksum(&ip4)
+	// var networkLayer gopacket.NetworkLayer
+	var ipv6 layers.IPv6
+	var ipv4 layers.IPv4
+
+	if s.cmdOpts.Ipv6 {
+		ipv6 = layers.IPv6{
+			SrcIP:      s.src,
+			DstIP:      s.dst,
+			Version:    6,
+			HopLimit:   64,
+			NextHeader: layers.IPProtocolTCP,
+		}
+		tcp.SetNetworkLayerForChecksum(&ipv6)
+	} else {
+		ipv4 = layers.IPv4{
+			SrcIP:    s.src,
+			DstIP:    s.dst,
+			Version:  4,
+			TTL:      64,
+			Protocol: layers.IPProtocolTCP,
+		}
+		tcp.SetNetworkLayerForChecksum(&ipv4)
+	}
 
 	// Create the flow we expect returning packets to have, so we can check
 	// against it and discard useless packets.
-	ipFlow := gopacket.NewFlow(layers.EndpointIPv4, s.dst, s.src)
+	var endpointType gopacket.EndpointType
+	endpointType = layers.EndpointIPv4
+	if s.cmdOpts.Ipv6 {
+		endpointType = layers.EndpointIPv6
+	}
+	ipFlow := gopacket.NewFlow(endpointType, s.dst, s.src)
 
 	// Start up a goroutine to read in packet data.
 	stop := make(chan struct{})
 	go s.receiver(ipFlow, stop)
 	defer close(stop)
 	log.Infof("Start Scan, time: %v", time.Now())
-	s.sender(&eth, &ip4, &tcp)
+	if s.cmdOpts.Ipv6 {
+		s.sender(&eth, &ipv6, &tcp)
+	} else {
+		s.sender(&eth, &ipv4, &tcp)
+	}
 
 	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
 	return nil
 }
 
-func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP) {
+func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, tcp *layers.TCP) {
 	retry := 0
 	interval := s.cmdOpts.Interval
+
 	for {
 		retry++
 		activePorts := 0 // Number of active scanning port.
@@ -326,11 +369,32 @@ func (s *scanner) sender(eth *layers.Ethernet, ip4 *layers.IPv4, tcp *layers.TCP
 					}
 				} else if s.socketFd > 0 {
 					_ = eth
-					if err := s.rawSockSend(ip4, tcp); err != nil {
-						log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+					switch v := netLayer.(type) {
+					case *layers.IPv4:
+						if err := s.rawSockSend(v, tcp); err != nil {
+							log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+						}
+					case *layers.IPv6:
+						if err := s.rawSockSend(v, tcp); err != nil {
+							log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+						}
+					default:
+						log.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
 					}
-				} else if err := s.send(eth, ip4, tcp); err != nil {
-					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
+
+				} else {
+					switch v := netLayer.(type) {
+					case *layers.IPv4:
+						if err := s.send(eth, v, tcp); err != nil {
+							log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
+						}
+					case *layers.IPv6:
+						if err := s.send(eth, v, tcp); err != nil {
+							log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
+						}
+					default:
+						log.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
+					}
 				}
 				select {
 				case <-time.After(interval):
@@ -401,19 +465,34 @@ func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
 	packetData := s.buf.Bytes()
 
 	ip := []byte(s.dst)
-	var dstIp [4]byte
-	copy(dstIp[:], ip[:4])
 
-	addr := syscall.SockaddrInet4{
-		Port: 0,
-		Addr: dstIp,
-	}
-	err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
-	if err != nil {
-		log.Fatal("Sendto:", err)
+	if !s.cmdOpts.Ipv6 {
+
+		var dstIp [4]byte
+		copy(dstIp[:], ip[:4])
+
+		addr := syscall.SockaddrInet4{
+			Port: 0,
+			Addr: dstIp,
+		}
+		err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
+		if err != nil {
+			log.Fatal("Sendto:", err)
+		}
+	} else {
+		var dstIp [16]byte
+		copy(dstIp[:], ip[:16])
+
+		addr := syscall.SockaddrInet6{
+			Port: 0,
+			Addr: dstIp,
+		}
+		err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
+		if err != nil {
+			log.Fatal("Sendto:", err)
+		}
 	}
 	return nil
-
 }
 
 // Raw socket send

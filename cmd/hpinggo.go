@@ -14,9 +14,9 @@ limitations under the License.
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
 // usage:
-// sudo hpinggo -target www.google.com  -scan 'all' -i 1us
-// sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms
-// sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -logtostderr
+// sudo hpinggo -target www.google.com  -scan 'all' -i 1us -S
+// sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms -S
+// sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -S -logtostderr
 
 package main
 
@@ -32,7 +32,6 @@ import (
 
 	log "github.com/golang/glog"
 	"github.com/google/gopacket/examples/util"
-	"github.com/google/gopacket/routing"
 	"github.com/jipanyang/hpinggo/options"
 	"github.com/jipanyang/hpinggo/scanner"
 	"golang.org/x/sys/unix"
@@ -128,20 +127,29 @@ func main() {
 	}
 
 	defer util.Run()()
-	router, err := routing.New()
-	if err != nil {
-		log.Fatal("routing error:", err)
-	}
 
 	if opt.Scan != "" {
 		for idx, ip := range ips {
-			if ip = ip.To4(); ip == nil {
-				fmt.Fprintf(os.Stderr, "non-ipv4: %v\n", ips[idx])
-				continue
+
+			if !opt.Ipv6 {
+				if ip = ip.To4(); ip == nil {
+					log.Errorf("non-ipv4: %v\n", ips[idx])
+					continue
+				}
+			} else {
+				tmpIp := ip
+				if tmpIp = tmpIp.To4(); tmpIp != nil {
+					log.Errorf("non-ipv6: %v\n", ips[idx])
+					continue
+				}
+				if ip = ip.To16(); ip == nil {
+					log.Errorf("non-ipv6: %v\n", ips[idx])
+					continue
+				}
 			}
 
 			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
-			s, err := scanner.NewScanner(ctx, ip, fd, router, opt)
+			s, err := scanner.NewScanner(ctx, ip, fd, opt)
 			if err != nil {
 				log.Errorf("unable to create scanner for %v: %v", ip, err)
 				continue
@@ -193,7 +201,14 @@ func displayOptions(ctx context.Context, opt options.Options) error {
 
 // TODO: support AF_INET6 for ipv6 based on opt.Ipv6
 func open_sockraw() int {
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
+	var domain int
+
+	if opt.Ipv6 {
+		domain = unix.AF_INET6
+	} else {
+		domain = unix.AF_INET
+	}
+	fd, err := unix.Socket(domain, unix.SOCK_RAW, unix.IPPROTO_RAW)
 
 	if err != nil || fd < 0 {
 		log.Exitf("error creating a raw socket: %v\n", err)
@@ -204,10 +219,16 @@ func open_sockraw() int {
 		log.Exitf("error enabling SO_BROADCAST: %v\n", err)
 	}
 
-	err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
+	if opt.Ipv6 {
+		err = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_HDRINCL, 1)
+	} else {
+		err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
+	}
+
 	if err != nil {
 		unix.Close(fd)
 		log.Exitf("error enabling IP_HDRINCL: %v\n", err)
 	}
+
 	return fd
 }
