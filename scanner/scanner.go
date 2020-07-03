@@ -164,11 +164,8 @@ func (s *scanner) parsePorts(ports string) {
 }
 
 func (s *scanner) open_pcap() {
-
 	var ifName string
-	// Note we could very easily add some BPF filtering here to greatly
-	// decrease the number of packets we have to look at when getting back
-	// scan results.
+
 	if s.cmdOpts.Interface != "" {
 		ifName = s.cmdOpts.Interface
 	} else {
@@ -278,8 +275,16 @@ func (s *scanner) Scan() error {
 	}
 	tcp := layers.TCP{
 		SrcPort: 54321,
-		DstPort: 0,    // will be incremented during the scan
-		SYN:     true, // TODO: populate TCP flags from cmdOpts
+		DstPort: 0, // will be incremented during the scan
+		FIN:     s.cmdOpts.TcpFin,
+		SYN:     s.cmdOpts.TcpSyn,
+		RST:     s.cmdOpts.TcpRst,
+		PSH:     s.cmdOpts.TcpPush,
+		ACK:     s.cmdOpts.TcpAck,
+		URG:     s.cmdOpts.TcpUrg,
+		ECE:     s.cmdOpts.TcpEce,
+		CWR:     s.cmdOpts.TcpCwr,
+		NS:      s.cmdOpts.TcpNs,
 	}
 	tcp.SetNetworkLayerForChecksum(&ip4)
 
@@ -457,9 +462,11 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 			if net == nil || net.NetworkFlow() != netFlow {
 				panic("packet has no network layer")
 			}
+
+			log.V(7).Infof("Received packet: %v", packet)
 			tcpLayer := packet.Layer(layers.LayerTypeTCP)
 			if tcpLayer == nil {
-				log.V(6).Infof("packet has not tcp layer")
+				log.Infof("packet has not tcp layer: %v", packet)
 				continue
 			}
 			tcp, ok := tcpLayer.(*layers.TCP)
@@ -469,8 +476,8 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 			if tcp.DstPort != 54321 {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
-				log.V(6).Infof("  port %v closed", tcp.SrcPort)
-			} else if tcp.SYN && tcp.ACK {
+				log.Infof("  port %v closed", tcp.SrcPort)
+			} else if tcp.SYN && tcp.ACK { //
 				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
 					continue
@@ -482,9 +489,8 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 				//TODO: use float variable
 				latency := int64((s.portScan[tcp.SrcPort].recvTime.Sub(s.portScan[tcp.SrcPort].sendTime)) / time.Nanosecond)
 				s.averageLatencyNs = (s.averageLatencyNs*(recvCount-1) + latency) / recvCount
-
 			} else {
-				log.V(7).Infof("ignoring useless packet")
+				log.V(7).Infof("ignoring useless(?) packet")
 			}
 
 		}

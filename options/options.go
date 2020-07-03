@@ -48,20 +48,65 @@ type Options struct {
 	// line will scan ports between 1 and 1000 AND port 8888 AND ports listed in /etc/services
 	Scan string // Ports range to scan
 
-	// tcp options
+	// tcp options, https://en.wikipedia.org/wiki/Transmission_Control_Protocol
 	TcpTimestamp bool // Enable the TCP timestamp option, and try to guess the timestamp update frequency and the remote system uptime.
-	fin          bool // Set FIN tcp flag
-	syn          bool // Set SYN tcp flag
-	rst          bool // Set RST tcp flag
-	push         bool // Set PUSH tcp flag
-	ack          bool // Set ACK tcp flag
-	urg          bool // Set URG tcp flag
-	xmas         bool // Set Xmas tcp flag
-	ymas         bool // Set Ymas tcp flag
+	// 	Flags (9 bits)
+	// Contains 9 1-bit flags (control bits) as follows:
+	// NS (1 bit): ECN-nonce - concealment protection[a]
+	// CWR (1 bit): Congestion window reduced (CWR) flag is set by the sending host to indicate that it received a TCP segment with the ECE flag set and had responded in congestion control mechanism.[b]
+	// ECE (1 bit): ECN-Echo has a dual role, depending on the value of the SYN flag. It indicates:
+	// If the SYN flag is set (1), that the TCP peer is ECN capable.
+	// If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11) in the IP header was received during normal transmission.[b] This serves as an indication of network congestion (or impending congestion) to the TCP sender.
+	// URG (1 bit): Indicates that the Urgent pointer field is significant
+	// ACK (1 bit): Indicates that the Acknowledgment field is significant. All packets after the initial SYN packet sent by the client should have this flag set.
+	// PSH (1 bit): Push function. Asks to push the buffered data to the receiving application.
+	// RST (1 bit): Reset the connection
+	// SYN (1 bit): Synchronize sequence numbers. Only the first packet sent from each end should have this flag set. Some other flags and fields change meaning based on this flag, and some are only valid when it is set, and others when it is clear.
+	// FIN (1 bit): Last packet from sender
+	TcpFin  bool // Set FIN tcp flag
+	TcpSyn  bool // Set SYN tcp flag
+	TcpRst  bool // Set RST tcp flag
+	TcpPush bool // Set PSH tcp flag
+	TcpAck  bool // Set ACK tcp flag
+	TcpUrg  bool // Set URG tcp flag
+	TcpEce  bool // Set ECE tcp flag
+	TcpCwr  bool // Set CWR tcp flag,
+	TcpNs   bool // Set NS flag
 }
 
 // TODO: display all parsed options
 // Implementing Stringer interface
 func (opt Options) String() string {
-	return fmt.Sprintf("Interval: %v, Interface: %v", opt.Interval, opt.Interface)
+	var tcpFlags string
+	if opt.TcpFin {
+		tcpFlags += "FIN,"
+	}
+	if opt.TcpSyn {
+		tcpFlags += "SYN,"
+	}
+	if opt.TcpRst {
+		tcpFlags += "RST,"
+	}
+	if opt.TcpPush {
+		tcpFlags += "PSH,"
+	}
+	if opt.TcpAck {
+		tcpFlags += "ACK,"
+	}
+	if opt.TcpUrg {
+		tcpFlags += "URG,"
+	}
+	if opt.TcpEce {
+		tcpFlags += "ECE,"
+	}
+	if opt.TcpCwr {
+		tcpFlags += "CWR,"
+	}
+	if opt.TcpNs {
+		tcpFlags += "NS,"
+	}
+	if tcpFlags != "" {
+		tcpFlags = tcpFlags[:len(tcpFlags)-1]
+	}
+	return fmt.Sprintf("Interval: %v, Interface: %v, TcpFlags: %v", opt.Interval, opt.Interface, tcpFlags)
 }

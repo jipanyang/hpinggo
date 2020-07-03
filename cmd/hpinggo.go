@@ -62,12 +62,32 @@ func init() {
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
+	flag.BoolVar(&opt.TcpFin, "fin", false, "Set tcp FIN flag")
+	flag.BoolVar(&opt.TcpSyn, "syn", false, "Set tcp SYN flag")
+	flag.BoolVar(&opt.TcpRst, "rst", false, "Set tcp RST flag")
+	flag.BoolVar(&opt.TcpPush, "push", false, "Set tcp PSH flag")
+	flag.BoolVar(&opt.TcpAck, "ack", false, "Set tcp ACK flag")
+	flag.BoolVar(&opt.TcpUrg, "urg", false, "Set tcp URG flag")
+	flag.BoolVar(&opt.TcpEce, "ece", false, "Set tcp ECE flag")
+	flag.BoolVar(&opt.TcpCwr, "cwr", false, "Set tcp CWR flag")
+	flag.BoolVar(&opt.TcpNs, "ns", false, "Set tcp NS flag")
+
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.UintVar(&opt.Count, "c", opt.Count, "Short for count.")
 	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
 	flag.StringVar(&opt.Scan, "8", opt.Scan, "Short for scan.")
+
+	flag.BoolVar(&opt.TcpFin, "F", opt.TcpFin, "Short for fin")
+	flag.BoolVar(&opt.TcpSyn, "S", opt.TcpSyn, "Short for fin")
+	flag.BoolVar(&opt.TcpRst, "R", opt.TcpRst, "Short for fin")
+	flag.BoolVar(&opt.TcpPush, "P", opt.TcpPush, "Short for fin")
+	flag.BoolVar(&opt.TcpAck, "A", opt.TcpAck, "Short for fin")
+	flag.BoolVar(&opt.TcpUrg, "U", opt.TcpUrg, "Short for fin")
+	flag.BoolVar(&opt.TcpEce, "X", opt.TcpEce, "Short for fin")
+	flag.BoolVar(&opt.TcpCwr, "Y", opt.TcpCwr, "Short for fin")
+	flag.BoolVar(&opt.TcpNs, "Z", opt.TcpNs, "Short for fin")
 }
 
 func main() {
@@ -82,8 +102,9 @@ func main() {
 		cancel()
 	}()
 
-	var ips []net.IP
+	displayOptions(ctx, opt)
 
+	var ips []net.IP
 	// Get remote target addresses
 	if !opt.RandDest {
 		if *target == "" {
@@ -97,7 +118,46 @@ func main() {
 		}
 	}
 	for _, ip := range ips {
-		log.Infof("%s IN A %s\n", *target, ip.String())
+		log.Infof("%s : %s\n", *target, ip.String())
+	}
+
+	fd := -1
+	if opt.RawSocket {
+		fd = open_sockraw()
+		log.Infof("Opened raw socket: %v\n", fd)
+	}
+
+	defer util.Run()()
+	router, err := routing.New()
+	if err != nil {
+		log.Fatal("routing error:", err)
+	}
+
+	if opt.Scan != "" {
+		for idx, ip := range ips {
+			if ip = ip.To4(); ip == nil {
+				fmt.Fprintf(os.Stderr, "non-ipv4: %v\n", ips[idx])
+				continue
+			}
+
+			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
+			s, err := scanner.NewScanner(ctx, ip, fd, router, opt)
+			if err != nil {
+				log.Errorf("unable to create scanner for %v: %v", ip, err)
+				continue
+			}
+			if err := s.Scan(); err != nil {
+				log.Errorf("unable to scan %v: %v", ip, err)
+			}
+			s.Close()
+
+			select {
+			case <-time.After(1 * time.Second):
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 
 	// Get local addresses
@@ -124,46 +184,6 @@ func main() {
 		}
 	}
 	log.Infof("To use addrs: %v\n", addrs)
-
-	fd := -1
-	if opt.RawSocket {
-		fd = open_sockraw()
-		log.Infof("Opened raw socket: %v\n", fd)
-	}
-
-	displayOptions(ctx, opt)
-
-	defer util.Run()()
-	router, err := routing.New()
-	if err != nil {
-		log.Fatal("routing error:", err)
-	}
-
-	for idx, ip := range ips {
-		if ip = ip.To4(); ip == nil {
-			fmt.Fprintf(os.Stderr, "non-ipv4: %v\n", ips[idx])
-			continue
-		}
-
-		fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
-		s, err := scanner.NewScanner(ctx, ip, fd, router, opt)
-		if err != nil {
-			log.Errorf("unable to create scanner for %v: %v", ip, err)
-			continue
-		}
-		if err := s.Scan(); err != nil {
-			log.Errorf("unable to scan %v: %v", ip, err)
-		}
-		s.Close()
-
-		select {
-		case <-time.After(1 * time.Second):
-			continue
-		case <-ctx.Done():
-			return
-		}
-	}
-
 }
 
 func displayOptions(ctx context.Context, opt options.Options) error {
