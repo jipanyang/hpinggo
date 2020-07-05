@@ -17,6 +17,7 @@ limitations under the License.
 // sudo hpinggo -target www.google.com  -scan 'all' -i 1us -S
 // sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms -S
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -S -logtostderr
+// sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -ipv6  -i 1ms -S
 
 package main
 

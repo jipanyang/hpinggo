@@ -95,7 +95,7 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 		var err error
 
 		if s.cmdOpts.Ipv6 {
-			ipConn, err = net.ListenPacket("ip6:tcp", "::")
+			ipConn, err = net.ListenPacket("ip6:tcp6", "::")
 		} else {
 			ipConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
 		}
@@ -209,6 +209,9 @@ func (s *scanner) Close() {
 // reply.  This is pretty slow right now, since it blocks on the ARP
 // request/reply.
 func (s *scanner) getHwAddr() (net.HardwareAddr, error) {
+	if s.cmdOpts.Ipv6 {
+		return s.getHwAddrWithNs()
+	}
 	start := time.Now()
 	arpDst := s.dst
 	if s.gw != nil {
@@ -252,6 +255,134 @@ func (s *scanner) getHwAddr() (net.HardwareAddr, error) {
 			arp := arpLayer.(*layers.ARP)
 			if net.IP(arp.SourceProtAddress).Equal(net.IP(arpDst)) {
 				return net.HardwareAddr(arp.SourceHwAddress), nil
+			}
+		}
+	}
+}
+
+// ipv6LinkLocalUnicastAddr returns an IPv6 link-local unicast address
+// on the given network interface for tests. It returns net.IPv6zero if no
+// suitable address is found.
+func ipv6LinkLocalUnicastAddr(ifi *net.Interface) net.IP {
+	if ifi == nil {
+		return net.IPv6zero
+	}
+	ifat, err := ifi.Addrs()
+	if err != nil {
+		return net.IPv6zero
+	}
+	for _, ifa := range ifat {
+		if ifa, ok := ifa.(*net.IPNet); ok {
+			if ifa.IP.To4() == nil && ifa.IP.IsLinkLocalUnicast() {
+				return ifa.IP
+			}
+		}
+	}
+	return net.IPv6zero
+}
+
+// Typical Neighbor Solicitation messages are multicast for address resolution
+// and unicast when the reach ability of a neighboring node is being verified.
+// SolicitedNodeMulticast returns the solicited-node multicast address for
+// an IPv6 address.
+// For a multicast Neighbor Solicitation message, the Destination Address field is
+// set to the Ethernet MAC address that corresponds to the solicited-node address of the target.
+// For a unicast Neighbor Solicitation message, the Destination Address field is set to the unicast MAC
+// address of the neighbor.
+// In the IPv6 header of the Neighbor Solicitation message, you will find these settings:
+// The Source Address field is set to either a unicast IPv6 address assigned to the sending interface or,
+// during duplicate address detection, the unspecified address (::).
+// For a multicast Neighbor Solicitation, the Destination Address field is set to the solicited node
+// address of the target. For a unicast Neighbor Solicitation, the Destination Address field is set to
+// the unicast address of the target.
+
+func SolicitedNodeMulticast(ip net.IP) (net.HardwareAddr, net.IP, error) {
+	if ip.To16() == nil || ip.To4() != nil {
+		return nil, nil, fmt.Errorf("not IPv6 address: %q", ip.String())
+	}
+
+	// Fixed prefix, and add low 24 bits taken from input address.
+	slma := net.HardwareAddr{0x33, 0x33, 0xff, 0x00, 0x00, 0x00}
+	for i := 3; i > 0; i-- {
+		slma[6-i] = ip[16-i]
+	}
+	// Fixed prefix, and low 24 bits taken from input address.
+	snm := net.ParseIP("ff02::1:ff00:0")
+	for i := 13; i < 16; i++ {
+		snm[i] = ip[i]
+	}
+
+	log.Infof("slma: %v, snm %v", slma, snm)
+	return slma, snm, nil
+}
+
+func (s *scanner) getHwAddrWithNs() (net.HardwareAddr, error) {
+	start := time.Now()
+	nsDst := s.dst
+	if s.gw != nil {
+		nsDst = s.gw
+	}
+
+	dstMac, dstIp, err := SolicitedNodeMulticast(nsDst)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare the layers to send for an ARP request.
+	eth := layers.Ethernet{
+		SrcMAC:       s.iface.HardwareAddr,
+		DstMAC:       dstMac,
+		EthernetType: layers.EthernetTypeIPv6,
+	}
+	ip6 := layers.IPv6{
+		SrcIP:      ipv6LinkLocalUnicastAddr(s.iface),
+		DstIP:      dstIp,
+		Version:    6,
+		HopLimit:   255,
+		NextHeader: layers.IPProtocolICMPv6,
+	}
+
+	icmp6 := layers.ICMPv6{
+		TypeCode: layers.CreateICMPv6TypeCode(layers.ICMPv6TypeNeighborSolicitation, 0),
+		// Checksum: ,
+	}
+	icmp6.SetNetworkLayerForChecksum(&ip6)
+
+	sourcLinkAddr := layers.ICMPv6Option{
+		Type: layers.ICMPv6OptSourceAddress,
+		Data: s.iface.HardwareAddr,
+	}
+
+	ns := layers.ICMPv6NeighborSolicitation{
+		TargetAddress: nsDst,
+		Options:       layers.ICMPv6Options{sourcLinkAddr},
+	}
+
+	// Send a single NS request packet
+	if err := s.send(&eth, &ip6, &icmp6, &ns); err != nil {
+		return nil, err
+	}
+	// Wait 3 seconds for a Neighbor Advertisement.
+	for {
+		if time.Since(start) > time.Second*3 {
+			return nil, errors.New("getHwAddrWithNs: timeout getting Neighbor Advertisement")
+		}
+		data, _, err := s.handle.ReadPacketData()
+		if err == pcap.NextErrorTimeoutExpired {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		packet := gopacket.NewPacket(data, layers.LayerTypeEthernet, gopacket.NoCopy)
+		if naLayer := packet.Layer(layers.LayerTypeICMPv6NeighborAdvertisement); naLayer != nil {
+			na := naLayer.(*layers.ICMPv6NeighborAdvertisement)
+			if net.IP(na.TargetAddress).Equal(net.IP(nsDst)) {
+				for _, option := range na.Options {
+					if option.Type == layers.ICMPv6OptTargetAddress {
+						return net.HardwareAddr(option.Data), nil
+					}
+				}
+
 			}
 		}
 	}
