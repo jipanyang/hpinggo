@@ -22,10 +22,9 @@ import (
 // Options is a type to hold parameters that affect how hpinggo generate and analyze packets
 type Options struct {
 	Interval      time.Duration // Interval between sending each packet.
-	Count         uint          // Number of packets to generate, 0 is infinite.
+	Count         int           // Number of packets to generate, 0 is infinite.
 	RandDest      bool          // Enables the random destination mode
 	Delimiter     string        // Delimiter between path elements when converted to string.
-	Display       func([]byte)  // Function called to display each result.
 	DisplayPrefix string        // Prefix for each line of result output.
 	DisplayIndent string        // Indent per nesting level of result output.
 	DisplayPeer   bool          // Display the immediate connected peer.
@@ -72,6 +71,8 @@ type Options struct {
 	TcpEce  bool // Set ECE tcp flag
 	TcpCwr  bool // Set CWR tcp flag,
 	TcpNs   bool // Set NS flag
+
+	InitSport int // Initial source port number
 }
 
 // TODO: display all parsed options

@@ -25,10 +25,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"golang.org/x/net/ipv4"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
 	"sync"
+
 	"time"
 
 	log "github.com/golang/glog"
@@ -38,13 +41,31 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Default value for options.
+const (
+	DEFAULT_SENDINGWAIT      = 1   /* wait 1 sec. between sending each packets */
+	DEFAULT_DPORT            = 0   /* default dest. port */
+	DEFAULT_INITSPORT        = -1  /* default initial source port: -1 means random */
+	DEFAULT_COUNT            = -1  /* default packets count: -1 means forever */
+	DEFAULT_TTL              = 64  /* default ip->ttl value */
+	DEFAULT_SRCWINSIZE       = 512 /* default tcp windows size */
+	DEFAULT_VIRTUAL_MTU      = 16  /* tiny fragments */
+	DEFAULT_ICMP_TYPE        = 8   /* echo request */
+	DEFAULT_ICMP_CODE        = 0   /* icmp-type relative */
+	DEFAULT_ICMP_IP_VERSION  = 4
+	DEFAULT_ICMP_IP_IHL      = (ipv4.HeaderLen >> 2)
+	DEFAULT_ICMP_IP_TOS      = 0
+	DEFAULT_ICMP_IP_TOT_LEN  = 0  /* computed by send_icmp_*() */
+	DEFAULT_ICMP_IP_ID       = 0  /* rand */
+	DEFAULT_ICMP_CKSUM       = -1 /* -1 means compute the cksum */
+	DEFAULT_ICMP_IP_PROTOCOL = 6  /* TCP */
+	DEFAULT_RAW_IP_PROTOCOL  = 6  /* TCP */
+	DEFAULT_TRACEROUTE_TTL   = 1
+)
+
 var (
 	mu  sync.Mutex
-	opt = options.Options{Display: func(b []byte) {
-		defer mu.Unlock()
-		mu.Lock()
-		os.Stdout.Write(append(b, '\n'))
-	}}
+	opt = options.Options{}
 
 	target = flag.String("target", "", "Name of remote target for the packets")
 )
@@ -52,7 +73,6 @@ var (
 func init() {
 	// Config command-line flags.
 	flag.DurationVar(&opt.Interval, "interval", 1*time.Second, "Interval at which to send each packet.")
-	flag.UintVar(&opt.Count, "count", 0, "Number of polling/streaming events (0 is infinite).")
 	flag.StringVar(&opt.DisplayPrefix, "display_prefix", "", "Per output line prefix.")
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
@@ -61,6 +81,9 @@ func init() {
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
+
+	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
+	flag.IntVar(&opt.InitSport, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
 
 	flag.BoolVar(&opt.TcpFin, "fin", false, "Set tcp FIN flag")
 	flag.BoolVar(&opt.TcpSyn, "syn", false, "Set tcp SYN flag")
@@ -73,7 +96,8 @@ func init() {
 	flag.BoolVar(&opt.TcpNs, "ns", false, "Set tcp NS flag")
 
 	// Shortcut flags that can be used in place of the longform flags above.
-	flag.UintVar(&opt.Count, "c", opt.Count, "Short for count.")
+	flag.IntVar(&opt.Count, "c", opt.Count, "Short for count.")
+	flag.IntVar(&opt.InitSport, "s", opt.InitSport, "Short for baseport.")
 	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
@@ -102,8 +126,6 @@ func main() {
 		cancel()
 	}()
 
-	displayOptions(ctx, opt)
-
 	var ips []net.IP
 	// Get remote target addresses
 	if !opt.RandDest {
@@ -121,6 +143,10 @@ func main() {
 		log.Infof("%s : %s\n", *target, ip.String())
 	}
 
+	rand.Seed(time.Now().UnixNano())
+	if opt.InitSport == DEFAULT_INITSPORT {
+		opt.InitSport = 1024 + (rand.Intn(2000))
+	}
 	fd := -1
 	if opt.RawSocket {
 		fd = open_sockraw()

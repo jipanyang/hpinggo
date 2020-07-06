@@ -416,7 +416,7 @@ func (s *scanner) Scan() error {
 	}
 
 	tcp := layers.TCP{
-		SrcPort: 54321,
+		SrcPort: layers.TCPPort(s.cmdOpts.InitSport),
 		DstPort: 0, // will be incremented during the scan
 		FIN:     s.cmdOpts.TcpFin,
 		SYN:     s.cmdOpts.TcpSyn,
@@ -437,7 +437,7 @@ func (s *scanner) Scan() error {
 			SrcIP:      s.src,
 			DstIP:      s.dst,
 			Version:    6,
-			HopLimit:   64,
+			HopLimit:   255,
 			NextHeader: layers.IPProtocolTCP,
 		}
 		tcp.SetNetworkLayerForChecksum(&ipv6)
@@ -683,7 +683,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 			if !ok {
 				panic("tcp layer is not tcp layer :-/")
 			}
-			if tcp.DstPort != 54321 {
+			if tcp.DstPort != layers.TCPPort(s.cmdOpts.InitSport) {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
 				log.Infof("  port %v closed", tcp.SrcPort)
