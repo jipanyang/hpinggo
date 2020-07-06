@@ -95,7 +95,7 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 		var err error
 
 		if s.cmdOpts.Ipv6 {
-			ipConn, err = net.ListenPacket("ip6:tcp6", "::")
+			ipConn, err = net.ListenPacket("ip6:tcp", "::")
 		} else {
 			ipConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
 		}
