@@ -124,6 +124,103 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 	return s, nil
 }
 
+// scanner scans the dst IP address.
+func (s *scanner) Scan() error {
+	// if using pcap for sending packets
+	var hwaddr net.HardwareAddr
+	var err error
+	var eth layers.Ethernet
+
+	// If pcap handle is to be used for sending packets, ether layer info should be populated.
+	// TODO: keep one sending channel only, remove the others after evaluation
+	if s.socketFd <= 0 {
+		// First off, get the MAC address we should be sending packets to.
+		hwaddr, err = s.getHwAddr()
+		if err != nil {
+			return err
+		}
+		var ethType layers.EthernetType = layers.EthernetTypeIPv4
+		if s.cmdOpts.Ipv6 {
+			ethType = layers.EthernetTypeIPv6
+		}
+		// Construct all the network layers we need.
+		eth = layers.Ethernet{
+			SrcMAC:       s.iface.HardwareAddr,
+			DstMAC:       hwaddr,
+			EthernetType: ethType,
+		}
+	}
+
+	tcp := layers.TCP{
+		SrcPort: layers.TCPPort(s.cmdOpts.InitSport),
+		DstPort: 0, // will be incremented during the scan
+		FIN:     s.cmdOpts.TcpFin,
+		SYN:     s.cmdOpts.TcpSyn,
+		RST:     s.cmdOpts.TcpRst,
+		PSH:     s.cmdOpts.TcpPush,
+		ACK:     s.cmdOpts.TcpAck,
+		URG:     s.cmdOpts.TcpUrg,
+		ECE:     s.cmdOpts.TcpEce,
+		CWR:     s.cmdOpts.TcpCwr,
+		NS:      s.cmdOpts.TcpNs,
+	}
+	// var networkLayer gopacket.NetworkLayer
+	var ipv6 layers.IPv6
+	var ipv4 layers.IPv4
+
+	if s.cmdOpts.Ipv6 {
+		ipv6 = layers.IPv6{
+			SrcIP:      s.src,
+			DstIP:      s.dst,
+			Version:    6,
+			HopLimit:   255,
+			NextHeader: layers.IPProtocolTCP,
+		}
+		tcp.SetNetworkLayerForChecksum(&ipv6)
+	} else {
+		ipv4 = layers.IPv4{
+			SrcIP:    s.src,
+			DstIP:    s.dst,
+			Version:  4,
+			TTL:      64,
+			Protocol: layers.IPProtocolTCP,
+		}
+		tcp.SetNetworkLayerForChecksum(&ipv4)
+	}
+
+	// Create the flow we expect returning packets to have, so we can check
+	// against it and discard useless packets.
+	var endpointType gopacket.EndpointType
+	endpointType = layers.EndpointIPv4
+	if s.cmdOpts.Ipv6 {
+		endpointType = layers.EndpointIPv6
+	}
+	ipFlow := gopacket.NewFlow(endpointType, s.dst, s.src)
+
+	// Start up a goroutine to read in packet data.
+	stop := make(chan struct{})
+	go s.receiver(ipFlow, stop)
+	defer close(stop)
+	log.Infof("Start Scan, time: %v", time.Now())
+	if s.cmdOpts.Ipv6 {
+		s.sender(&eth, &ipv6, &tcp)
+	} else {
+		s.sender(&eth, &ipv4, &tcp)
+	}
+
+	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
+	return nil
+}
+
+func (s *scanner) Close() {
+	// remove the filter to get any packet to get out of handle.getNextBufPtrLocked()
+	// Otherwise pcap handle will wait for packet which matches the filter.
+	if err := s.handle.SetBPFFilter(""); err != nil {
+		log.Exitf("SetBPFFilter: %v\n", err)
+	}
+	s.handle.Close()
+}
+
 func (s *scanner) parsePorts(ports string) {
 	// , is the deliminator
 	portsRanges := strings.Split(ports, ",")
@@ -192,15 +289,6 @@ func (s *scanner) open_pcap() {
 	}
 	log.Infof("Opened pcap handle %+v", handle)
 	s.handle = handle
-}
-
-func (s *scanner) Close() {
-	// remove the filter to get any packet to get out of handle.getNextBufPtrLocked()
-	// Otherwise pcap handle will wait for packet which matches the filter.
-	if err := s.handle.SetBPFFilter(""); err != nil {
-		log.Exitf("SetBPFFilter: %v\n", err)
-	}
-	s.handle.Close()
 }
 
 // getHwAddr is a hacky but effective way to get the destination hardware
@@ -386,94 +474,6 @@ func (s *scanner) getHwAddrWithNs() (net.HardwareAddr, error) {
 			}
 		}
 	}
-}
-
-// scanner scans the dst IP address.
-func (s *scanner) Scan() error {
-	// if using pcap for sending packets
-	var hwaddr net.HardwareAddr
-	var err error
-	var eth layers.Ethernet
-
-	// If pcap handle is to be used for sending packets, ether layer info should be populated.
-	// TODO: keep one sending channel only, remove the others after evaluation
-	if s.socketFd <= 0 {
-		// First off, get the MAC address we should be sending packets to.
-		hwaddr, err = s.getHwAddr()
-		if err != nil {
-			return err
-		}
-		var ethType layers.EthernetType = layers.EthernetTypeIPv4
-		if s.cmdOpts.Ipv6 {
-			ethType = layers.EthernetTypeIPv6
-		}
-		// Construct all the network layers we need.
-		eth = layers.Ethernet{
-			SrcMAC:       s.iface.HardwareAddr,
-			DstMAC:       hwaddr,
-			EthernetType: ethType,
-		}
-	}
-
-	tcp := layers.TCP{
-		SrcPort: layers.TCPPort(s.cmdOpts.InitSport),
-		DstPort: 0, // will be incremented during the scan
-		FIN:     s.cmdOpts.TcpFin,
-		SYN:     s.cmdOpts.TcpSyn,
-		RST:     s.cmdOpts.TcpRst,
-		PSH:     s.cmdOpts.TcpPush,
-		ACK:     s.cmdOpts.TcpAck,
-		URG:     s.cmdOpts.TcpUrg,
-		ECE:     s.cmdOpts.TcpEce,
-		CWR:     s.cmdOpts.TcpCwr,
-		NS:      s.cmdOpts.TcpNs,
-	}
-	// var networkLayer gopacket.NetworkLayer
-	var ipv6 layers.IPv6
-	var ipv4 layers.IPv4
-
-	if s.cmdOpts.Ipv6 {
-		ipv6 = layers.IPv6{
-			SrcIP:      s.src,
-			DstIP:      s.dst,
-			Version:    6,
-			HopLimit:   255,
-			NextHeader: layers.IPProtocolTCP,
-		}
-		tcp.SetNetworkLayerForChecksum(&ipv6)
-	} else {
-		ipv4 = layers.IPv4{
-			SrcIP:    s.src,
-			DstIP:    s.dst,
-			Version:  4,
-			TTL:      64,
-			Protocol: layers.IPProtocolTCP,
-		}
-		tcp.SetNetworkLayerForChecksum(&ipv4)
-	}
-
-	// Create the flow we expect returning packets to have, so we can check
-	// against it and discard useless packets.
-	var endpointType gopacket.EndpointType
-	endpointType = layers.EndpointIPv4
-	if s.cmdOpts.Ipv6 {
-		endpointType = layers.EndpointIPv6
-	}
-	ipFlow := gopacket.NewFlow(endpointType, s.dst, s.src)
-
-	// Start up a goroutine to read in packet data.
-	stop := make(chan struct{})
-	go s.receiver(ipFlow, stop)
-	defer close(stop)
-	log.Infof("Start Scan, time: %v", time.Now())
-	if s.cmdOpts.Ipv6 {
-		s.sender(&eth, &ipv6, &tcp)
-	} else {
-		s.sender(&eth, &ipv4, &tcp)
-	}
-
-	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
-	return nil
 }
 
 func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, tcp *layers.TCP) {

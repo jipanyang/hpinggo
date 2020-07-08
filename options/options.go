@@ -73,6 +73,10 @@ type Options struct {
 	TcpNs   bool // Set NS flag
 
 	InitSport int // Initial source port number
+	// [+][+]dest port Set destination port, default is 0. If '+' character precedes dest port number (i.e. +1024)
+	// destination port will be increased for each reply received.
+	// If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.
+	DestPort string // Set destination port
 }
 
 // TODO: display all parsed options
@@ -109,5 +113,6 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v", opt.Interval, opt.Interface, opt.Ipv6, tcpFlags)
+	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, InitSport: %v, DestPort: %v",
+		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.InitSport, opt.DestPort)
 }

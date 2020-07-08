@@ -37,6 +37,7 @@ import (
 	log "github.com/golang/glog"
 	"github.com/google/gopacket/examples/util"
 	"github.com/jipanyang/hpinggo/options"
+	"github.com/jipanyang/hpinggo/packetstream"
 	"github.com/jipanyang/hpinggo/scanner"
 	"golang.org/x/sys/unix"
 )
@@ -84,6 +85,7 @@ func init() {
 
 	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
 	flag.IntVar(&opt.InitSport, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
+	flag.StringVar(&opt.DestPort, "destport", "0", "If '+' character precedes dest port number (i.e. +1024) destination port will be increased for each reply received. If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.")
 
 	flag.BoolVar(&opt.TcpFin, "fin", false, "Set tcp FIN flag")
 	flag.BoolVar(&opt.TcpSyn, "syn", false, "Set tcp SYN flag")
@@ -98,6 +100,7 @@ func init() {
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.IntVar(&opt.Count, "c", opt.Count, "Short for count.")
 	flag.IntVar(&opt.InitSport, "s", opt.InitSport, "Short for baseport.")
+	flag.StringVar(&opt.DestPort, "p", opt.DestPort, "Short for destport.")
 	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
 	flag.DurationVar(&opt.Interval, "i", opt.Interval, "Short for interval.")
@@ -155,26 +158,24 @@ func main() {
 
 	defer util.Run()()
 
-	if opt.Scan != "" {
-		for idx, ip := range ips {
-
-			if !opt.Ipv6 {
-				if ip = ip.To4(); ip == nil {
-					log.Errorf("non-ipv4: %v\n", ips[idx])
-					continue
-				}
-			} else {
-				tmpIp := ip
-				if tmpIp = tmpIp.To4(); tmpIp != nil {
-					log.Errorf("non-ipv6: %v\n", ips[idx])
-					continue
-				}
-				if ip = ip.To16(); ip == nil {
-					log.Errorf("non-ipv6: %v\n", ips[idx])
-					continue
-				}
+	for idx, ip := range ips {
+		if !opt.Ipv6 {
+			if ip = ip.To4(); ip == nil {
+				log.Errorf("non-ipv4: %v\n", ips[idx])
+				continue
 			}
-
+		} else {
+			tmpIp := ip
+			if tmpIp = tmpIp.To4(); tmpIp != nil {
+				log.Errorf("non-ipv6: %v\n", ips[idx])
+				continue
+			}
+			if ip = ip.To16(); ip == nil {
+				log.Errorf("non-ipv6: %v\n", ips[idx])
+				continue
+			}
+		}
+		if opt.Scan != "" {
 			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
 			s, err := scanner.NewScanner(ctx, ip, fd, opt)
 			if err != nil {
@@ -185,13 +186,24 @@ func main() {
 				log.Errorf("unable to scan %v: %v", ip, err)
 			}
 			s.Close()
-
-			select {
-			case <-time.After(1 * time.Second):
+		} else {
+			// TODO: support random dest IP and source IP
+			m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
+			if err != nil {
+				log.Errorf("unable to create PacketStreamMgmr for %v: %v", ip, err)
 				continue
-			case <-ctx.Done():
-				return
 			}
+			if err := m.Stream(); err != nil {
+				log.Errorf("unable to Stream %v: %v", ip, err)
+			}
+			m.Close()
+		}
+
+		select {
+		case <-time.After(1 * time.Second):
+			continue
+		case <-ctx.Done():
+			return
 		}
 	}
 
@@ -219,6 +231,7 @@ func main() {
 		}
 	}
 	log.Infof("To use addrs: %v\n", addrs)
+
 }
 
 func displayOptions(ctx context.Context, opt options.Options) error {
