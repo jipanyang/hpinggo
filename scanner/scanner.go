@@ -152,7 +152,7 @@ func (s *scanner) Scan() error {
 	}
 
 	tcp := layers.TCP{
-		SrcPort: layers.TCPPort(s.cmdOpts.InitSport),
+		SrcPort: layers.TCPPort(s.cmdOpts.BaseSourcePort),
 		DstPort: 0, // will be incremented during the scan
 		FIN:     s.cmdOpts.TcpFin,
 		SYN:     s.cmdOpts.TcpSyn,
@@ -670,7 +670,9 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 		case packet = <-in:
 			net := packet.NetworkLayer()
 			if net == nil || net.NetworkFlow() != netFlow {
-				panic("packet has no network layer")
+				// Could be arp
+				log.V(6).Infof("packet: %v", packet)
+				continue
 			}
 
 			log.V(7).Infof("Received packet: %v", packet)
@@ -683,7 +685,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 			if !ok {
 				panic("tcp layer is not tcp layer :-/")
 			}
-			if tcp.DstPort != layers.TCPPort(s.cmdOpts.InitSport) {
+			if tcp.DstPort != layers.TCPPort(s.cmdOpts.BaseSourcePort) {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
 				log.Infof("  port %v closed", tcp.SrcPort)

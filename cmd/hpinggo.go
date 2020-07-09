@@ -13,11 +13,14 @@ limitations under the License.
 
 // The hpinggo program implements the hping like packet generator and analyzer.
 //
-// usage:
+// scan mode usage:
 // sudo hpinggo -target www.google.com  -scan 'all' -i 1us -S
 // sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms -S
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -S -logtostderr
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -ipv6  -i 1ms -S
+
+// stream mode usage
+// sudo hpinggo -target www.google.com  -s 5432 -p +79 -S -c 2
 
 package main
 
@@ -78,13 +81,15 @@ func init() {
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.BoolVar(&opt.RandDest, "rand-dest", false, "Enables the random destination mode")
+	flag.BoolVar(&opt.RandSource, "rand-source", false, "Enables the random source mode")
 	flag.BoolVar(&opt.Ipv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
 	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
-	flag.IntVar(&opt.InitSport, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
+	flag.IntVar(&opt.BaseSourcePort, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
+	flag.BoolVar(&opt.Keep, "keep", false, "When set, keep const source port")
 	flag.StringVar(&opt.DestPort, "destport", "0", "If '+' character precedes dest port number (i.e. +1024) destination port will be increased for each reply received. If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.")
 
 	flag.BoolVar(&opt.TcpFin, "fin", false, "Set tcp FIN flag")
@@ -99,7 +104,7 @@ func init() {
 
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.IntVar(&opt.Count, "c", opt.Count, "Short for count.")
-	flag.IntVar(&opt.InitSport, "s", opt.InitSport, "Short for baseport.")
+	flag.IntVar(&opt.BaseSourcePort, "s", opt.BaseSourcePort, "Short for baseport.")
 	flag.StringVar(&opt.DestPort, "p", opt.DestPort, "Short for destport.")
 	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")
@@ -141,14 +146,14 @@ func main() {
 		if err != nil {
 			log.Exitf("Could not get IPs: %v\n", err)
 		}
-	}
-	for _, ip := range ips {
-		log.Infof("%s : %s\n", *target, ip.String())
+		for _, ip := range ips {
+			log.Infof("%s : %s\n", *target, ip.String())
+		}
 	}
 
 	rand.Seed(time.Now().UnixNano())
-	if opt.InitSport == DEFAULT_INITSPORT {
-		opt.InitSport = 1024 + (rand.Intn(2000))
+	if opt.BaseSourcePort == DEFAULT_INITSPORT {
+		opt.BaseSourcePort = 1024 + (rand.Intn(2000))
 	}
 	fd := -1
 	if opt.RawSocket {
@@ -190,11 +195,11 @@ func main() {
 			// TODO: support random dest IP and source IP
 			m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
 			if err != nil {
-				log.Errorf("unable to create PacketStreamMgmr for %v: %v", ip, err)
+				log.Errorf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 				continue
 			}
 			if err := m.Stream(); err != nil {
-				log.Errorf("unable to Stream %v: %v", ip, err)
+				log.Errorf("Failed to Stream to %v: %v", ip, err)
 			}
 			m.Close()
 		}
@@ -205,6 +210,23 @@ func main() {
 		case <-ctx.Done():
 			return
 		}
+	}
+
+	if opt.RandDest {
+		var ip net.IP
+		if opt.Ipv6 {
+			ip = net.IPv6zero
+		} else {
+			ip = net.IPv4zero
+		}
+		m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
+		if err != nil {
+			log.Exitf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
+		}
+		if err := m.Stream(); err != nil {
+			log.Exitf("Failed to Stream to random dest IP: %v", err)
+		}
+		m.Close()
 	}
 
 	// Get local addresses

@@ -21,13 +21,15 @@ import (
 
 // Options is a type to hold parameters that affect how hpinggo generate and analyze packets
 type Options struct {
-	Interval      time.Duration // Interval between sending each packet.
-	Count         int           // Number of packets to generate, 0 is infinite.
-	RandDest      bool          // Enables the random destination mode
-	Delimiter     string        // Delimiter between path elements when converted to string.
-	DisplayPrefix string        // Prefix for each line of result output.
-	DisplayIndent string        // Indent per nesting level of result output.
-	DisplayPeer   bool          // Display the immediate connected peer.
+	Interval   time.Duration // Interval between sending each packet.
+	Count      int           // Number of packets to generate, 0 is infinite.
+	RandDest   bool          // Enables the random destination mode
+	RandSource bool          // Enables the random source mode
+
+	Delimiter     string // Delimiter between path elements when converted to string.
+	DisplayPrefix string // Prefix for each line of result output.
+	DisplayIndent string // Indent per nesting level of result output.
+	DisplayPeer   bool   // Display the immediate connected peer.
 
 	RawSocket bool // Use raw socket for sending packet when true
 
@@ -38,6 +40,16 @@ type Options struct {
 	// <FORMAT> - human readable timestamp according to <FORMAT>
 	Timestamp string // Formatting of timestamp in result output.
 	Ipv6      bool   // run in ipv6 mode
+
+	// RAW IP mode, in this mode it will send IP header with data appended with
+	// --signature and/or --file, see also --ipproto that allows you to set the ip protocol field.
+	RawIp bool
+	// ICMP mode, by default it will send ICMP echo-request,
+	// you can set other ICMP type/code using --icmptype --icmpcode options.
+	Icmp bool
+	// UDP mode, by default it will send udp to target host's port 0.
+	// UDP header tunable options are the following: --baseport, --destport, --keep.
+	Udp bool
 
 	// port groups are comma separated: a number describes just a single port,
 	// so 1,2,3 means port 1, 2 and 3. ranges are specified using a start-end notation,
@@ -72,7 +84,8 @@ type Options struct {
 	TcpCwr  bool // Set CWR tcp flag,
 	TcpNs   bool // Set NS flag
 
-	InitSport int // Initial source port number
+	BaseSourcePort int  // Initial source port number
+	Keep           bool //keep still source port, see BaseSourcePort for more information.
 	// [+][+]dest port Set destination port, default is 0. If '+' character precedes dest port number (i.e. +1024)
 	// destination port will be increased for each reply received.
 	// If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.
@@ -113,6 +126,6 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, InitSport: %v, DestPort: %v",
-		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.InitSport, opt.DestPort)
+	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, BaseSourcePort: %v, Keep: %v, DestPort: %v",
+		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort, opt.Keep, opt.DestPort)
 }

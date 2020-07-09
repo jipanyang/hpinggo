@@ -105,10 +105,6 @@ func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 	return s
 }
 
-// emptyStream is used to finish bidi that only have one stream, in
-// collectOldStreams.
-var emptyStream = &packetStream{done: true}
-
 // collectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
 func (f *streamFactory) collectOldStreams() {
@@ -133,7 +129,7 @@ func (s *packetStream) Reassembled(rs []tcpassembly.Reassembly) {
 		// Mark that we've received new packet data.
 		// We could just use time.Now, but by using r.Seen we handle the case
 		// where packets are being read from a file and could be very old.
-		if s.bidi.lastPacketSeen.After(r.Seen) {
+		if s.bidi.lastPacketSeen.Before(r.Seen) {
 			s.bidi.lastPacketSeen = r.Seen
 		}
 	}
@@ -167,6 +163,7 @@ type packetStreamMgmr struct {
 	// iface is the interface to send packets on.
 	iface *net.Interface
 	// destination, gateway (if applicable), and source IP addresses to use.
+	// Note, they will be overrided if corresponding RandDest or RandSource option is set.
 	dst, gw, src net.IP
 
 	handle   *pcap.Handle
@@ -183,16 +180,16 @@ type packetStreamMgmr struct {
 
 	// options specified at user command line
 	cmdOpts options.Options
-
+	// convenient variables derived from options
 	baseDestPort     uint16
 	incDestPort      bool
 	forceIncDestPort bool
 }
 
-func NewPacketStreamMgmr(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (*packetStreamMgmr, error) {
+func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt options.Options) (*packetStreamMgmr, error) {
 	m := &packetStreamMgmr{
 		ctx:      ctxParent,
-		dst:      ip,
+		dst:      dstIp,
 		socketFd: fd,
 		packetOpts: gopacket.SerializeOptions{
 			FixLengths:       true,
@@ -202,6 +199,7 @@ func NewPacketStreamMgmr(ctxParent context.Context, ip net.IP, fd int, opt optio
 		cmdOpts: opt,
 	}
 
+	// Make the option setting available more conveniently
 	m.parseOptions()
 	// Set up assembly
 	m.streamFactory = &streamFactory{bidiMap: make(map[key]*bidi), recvCount: 0}
@@ -212,19 +210,19 @@ func NewPacketStreamMgmr(ctxParent context.Context, ip net.IP, fd int, opt optio
 	m.assembler.MaxBufferedPagesTotal = 100000
 	m.assembler.MaxBufferedPagesPerConnection = 1000
 
-	if !ip.IsUnspecified() {
+	if !dstIp.IsUnspecified() {
 		// Figure out the route to the IP.
 		// TODO: gopacket router will crash if no default ipv6 route  available, fix it.
 		router, err := routing.New()
 		if err != nil {
 			log.Fatal("routing error:", err)
 		}
-		iface, gw, src, err := router.Route(ip)
+		iface, gw, src, err := router.Route(dstIp)
 		if err != nil {
 			return nil, err
 		}
-		log.Infof("Streaming to ip %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
-			ip, iface.Name, gw, src, m.cmdOpts)
+		log.Infof("Streaming to dstIp %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
+			dstIp, iface.Name, gw, src, m.cmdOpts)
 		m.gw, m.src, m.iface = gw, src, iface
 
 		m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
@@ -370,7 +368,6 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 				log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
 			}
 			tcp.SetInternalPortsForTesting()
-			log.Errorf("tcp.TransportFlow() %+v", tcp.TransportFlow())
 			// pass the info to assembler
 			m.assembler.AssembleWithTimestamp(v.NetworkFlow(), tcp, time.Now())
 		case *layers.IPv6:
@@ -404,7 +401,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 func (m *packetStreamMgmr) Stream() error {
 	// TODO: support for UDP, ICMP, ....
 	tcp := layers.TCP{
-		SrcPort: layers.TCPPort(m.cmdOpts.InitSport),
+		SrcPort: layers.TCPPort(m.cmdOpts.BaseSourcePort),
 		DstPort: 0, // will be incremented during the scan
 		FIN:     m.cmdOpts.TcpFin,
 		SYN:     m.cmdOpts.TcpSyn,
