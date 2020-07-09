@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	MaxPort      = 65535 // Maximum port number
-	MaxScanRetry = 2     // Maximum scan retry before getting response
+	MaxPort         = 65535 // Maximum port number
+	MaxScanRetry    = 2     // Maximum scan retry before getting response
+	useListenPacket = false // net raw socket implementation, alternative to unix.IPPROTO_RAW
 )
 
 // net raw socket implementation, alternative to unix.IPPROTO_RAW
-var useListenPacket = bool(false)
+// var useListenPacket = bool(false)
 
 type portinfo struct {
 	active   bool      // writen by receiver, read by sender
@@ -689,6 +690,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
 				log.Infof("  port %v closed", tcp.SrcPort)
+				fmt.Fprintf(os.Stderr, "  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK { //
 				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)

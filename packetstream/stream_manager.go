@@ -7,8 +7,8 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/google/gopacket/reassembly"
 	"github.com/google/gopacket/routing"
-	"github.com/google/gopacket/tcpassembly"
 	"github.com/jipanyang/hpinggo/options"
 	"net"
 	"os"
@@ -24,8 +24,6 @@ const (
 	timeout time.Duration = time.Second * 5
 )
 
-// localEnpoint = layers.NewIPEndpoint(net.IP{1, 2, 3, 4}),
-
 // key is used to map bidirectional streams to each other.
 // should be applicable to TCP/UDP and other types of stream
 // TODO: how about icmp which doesn't have endpoint type, maybe add extra field in key struct?
@@ -38,8 +36,8 @@ func (k key) String() string {
 	return fmt.Sprintf("%v:%v", k.net, k.transport)
 }
 
-// packetStream implements tcpassembly.Stream
-// TODO: Use reassembly.Stream which seems to be more feature rich?
+// packetStream implements reassembly.Stream amd tcpassembly/Strea,
+// TODO: Fix reassembly.Stream connection track issue in streamFactory
 // TODO: Support UDP/ICMP and other protocols.
 type packetStream struct {
 	bytes int64 // total bytes seen on this stream.
@@ -66,9 +64,10 @@ type streamFactory struct {
 	recvCount int64
 }
 
-// New handles creating a new tcpassembly.Stream.
-// TODO: Use reassembly.Stream
-func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
+// streamFactory is used by assembly to create a new stream for each
+// new TCP session. creating a new reassembly.Stream.
+// TODO: Make use of AssemblerContext and tcp *layers.TCP
+func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, ac reassembly.AssemblerContext) reassembly.Stream {
 	// Create a new stream.
 	s := &packetStream{}
 
@@ -124,27 +123,28 @@ func (f *streamFactory) collectOldStreams() {
 	}
 }
 
-// Reassembled handles reassembled TCP stream data.
-func (s *packetStream) Reassembled(rs []tcpassembly.Reassembly) {
-	for _, r := range rs {
-		// For now, we'll simply count the bytes on each side of the TCP stream.
-		s.bytes += int64(len(r.Bytes))
-		if r.Skip > 0 {
-			s.bytes += int64(r.Skip)
-		}
-		// Mark that we've received new packet data.
-		// We could just use time.Now, but by using r.Seen we handle the case
-		// where packets are being read from a file and could be very old.
-		if s.bidi.lastPacketSeen.Before(r.Seen) {
-			s.bidi.lastPacketSeen = r.Seen
-		}
+func (s *packetStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, nextSeq reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) bool {
+	// Tell whether the TCP packet should be accepted, start could be modified to force a start even if no SYN have been seen
+	// TODO: make use of it
+	return true
+}
+
+func (s *packetStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
+	bytes, _ := sg.Lengths()
+	s.bytes += int64(bytes)
+
+	// GetCaptureInfo() gopacket.CaptureInfo
+	c := ac.GetCaptureInfo()
+	if s.bidi.lastPacketSeen.Before(c.Timestamp) {
+		s.bidi.lastPacketSeen = c.Timestamp
 	}
 }
 
-// ReassemblyComplete marks this stream as finished.
-func (s *packetStream) ReassemblyComplete() {
+func (s *packetStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
+	// TODO: make use of AssemblerContext
 	s.done = true
 	s.bidi.maybeFinish()
+	return true
 }
 
 // maybeFinish print out stats.
@@ -182,7 +182,7 @@ type packetStreamMgmr struct {
 	buf        gopacket.SerializeBuffer
 
 	streamFactory *streamFactory
-	assembler     *tcpassembly.Assembler
+	assembler     *reassembly.Assembler
 
 	// options specified at user command line
 	cmdOpts options.Options
@@ -207,10 +207,12 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 
 	// Make the option setting available more conveniently
 	m.parseOptions()
+
 	// Set up assembly
 	m.streamFactory = &streamFactory{bidiMap: make(map[key]*bidi), recvCount: 0}
-	streamPool := tcpassembly.NewStreamPool(m.streamFactory)
-	m.assembler = tcpassembly.NewAssembler(streamPool)
+	streamPool := reassembly.NewStreamPool(m.streamFactory)
+	m.assembler = reassembly.NewAssembler(streamPool)
+
 	// Limit memory usage by auto-flushing connection state if we get over 100K
 	// packets in memory, or over 1000 for a single stream.
 	m.assembler.MaxBufferedPagesTotal = 100000
@@ -337,13 +339,18 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 				continue
 			}
 			tcp := packet.TransportLayer().(*layers.TCP)
-			m.assembler.AssembleWithTimestamp(packet.NetworkLayer().NetworkFlow(), tcp, packet.Metadata().Timestamp)
+
+			// ctx := packet.Metadata()
+			// m.assembler.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, ctx)
+			m.assembler.Assemble(packet.NetworkLayer().NetworkFlow(), tcp)
 
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
 			log.Infof("---- FLUSHING ----")
-			m.assembler.FlushOlderThan(time.Now().Add(-timeout))
+
+			m.assembler.FlushCloseOlderThan(time.Now().Add(-timeout))
 			m.streamFactory.collectOldStreams()
+
 		case <-stop:
 			return
 		}
@@ -363,6 +370,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 
 	defer func() {
 		fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
+
 		fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n", sentPackets, m.streamFactory.recvCount)
 	}()
 
@@ -377,21 +385,23 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 			}
 			tcp.SetInternalPortsForTesting()
 			// pass the info to assembler so ingress flow may match it
-			m.assembler.AssembleWithTimestamp(v.NetworkFlow(), tcp, time.Now())
+
+			m.assembler.Assemble(v.NetworkFlow(), tcp)
+
 		case *layers.IPv6:
 			if err := m.rawSockSend(v, tcp); err != nil {
 				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
-			// pass the info to assembler
-			m.assembler.AssembleWithTimestamp(v.NetworkFlow(), tcp, time.Now())
+			// pass the info to assembler so ingress flow may match it
+
+			m.assembler.Assemble(v.NetworkFlow(), tcp)
+
 		default:
 			return fmt.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
 		}
 		if m.forceIncDestPort {
 			dstPort += 1
 		} else if m.incDestPort {
-			// Reading from streamFactory, may need mutex
-			// layers.TCPPort is of uint16, may overflow then round back.
 			m.streamFactory.rwm.RLock()
 			dstPort = m.baseDestPort + uint16(m.streamFactory.recvCount)
 			m.streamFactory.rwm.RUnlock()
