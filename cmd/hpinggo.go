@@ -20,7 +20,7 @@ limitations under the License.
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -ipv6  -i 1ms -S
 
 // stream mode usage
-// sudo hpinggo -target www.google.com  -s 5432 -p +79 -S -c 2
+// sudo hpinggo -target www.google.com  -s 5432 -p ++79 -S -c 2
 
 package main
 
@@ -89,7 +89,7 @@ func init() {
 
 	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
 	flag.IntVar(&opt.BaseSourcePort, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
-	flag.BoolVar(&opt.Keep, "keep", false, "When set, keep const source port")
+	flag.BoolVar(&opt.KeepConstSourcePort, "keep", false, "When set, keep const source port")
 	flag.StringVar(&opt.DestPort, "destport", "0", "If '+' character precedes dest port number (i.e. +1024) destination port will be increased for each reply received. If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.")
 
 	flag.BoolVar(&opt.TcpFin, "fin", false, "Set tcp FIN flag")

@@ -84,8 +84,8 @@ type Options struct {
 	TcpCwr  bool // Set CWR tcp flag,
 	TcpNs   bool // Set NS flag
 
-	BaseSourcePort int  // Initial source port number
-	Keep           bool //keep still source port, see BaseSourcePort for more information.
+	BaseSourcePort      int  // Initial source port number
+	KeepConstSourcePort bool //keep still source port, see BaseSourcePort for more information.
 	// [+][+]dest port Set destination port, default is 0. If '+' character precedes dest port number (i.e. +1024)
 	// destination port will be increased for each reply received.
 	// If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.
@@ -126,6 +126,6 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, BaseSourcePort: %v, Keep: %v, DestPort: %v",
-		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort, opt.Keep, opt.DestPort)
+	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v",
+		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort, opt.KeepConstSourcePort, opt.DestPort)
 }

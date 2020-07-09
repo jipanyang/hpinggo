@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -58,8 +59,11 @@ type bidi struct {
 type streamFactory struct {
 	// bidiMap maps keys to bidirectional stream pairs.
 	bidiMap      map[key]*bidi
-	recvCount    int64
 	localEnpoint gopacket.Endpoint
+	// the RWMutex is for protecting recvCount (for now) which may be updated in waitPackets
+	// and read in sendPackets
+	rwm       sync.RWMutex
+	recvCount int64
 }
 
 // New handles creating a new tcpassembly.Stream.
@@ -96,7 +100,9 @@ func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
 		} else {
 			log.V(5).Infof("[%v] found ingress side of bidirectional stream", bd.key)
 			bd.ingress = s
+			f.rwm.Lock()
 			f.recvCount += 1
+			f.rwm.Unlock()
 		}
 		// TODO: statistics of rtt, min/max/avg
 		delete(f.bidiMap, k)
@@ -235,6 +241,7 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 
 func (m *packetStreamMgmr) parseOptions() {
 	destPortStr := m.cmdOpts.DestPort
+
 	if destPortStr[:1] == "+" {
 		m.incDestPort = true
 		destPortStr = destPortStr[1:]
@@ -288,7 +295,6 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 	ip := []byte(m.dst)
 
 	if !m.cmdOpts.Ipv6 {
-
 		var dstIp [4]byte
 		copy(dstIp[:], ip[:4])
 
@@ -353,6 +359,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 	tcp := transportLayer.(*layers.TCP)
 	// TODO: Support --destport [+][+]dest port
 	dstPort := m.baseDestPort
+	srcPort := m.cmdOpts.BaseSourcePort
 
 	defer func() {
 		fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
@@ -361,32 +368,45 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 
 	for {
 		tcp.DstPort = layers.TCPPort(dstPort)
+		tcp.SrcPort = layers.TCPPort(srcPort)
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
 			if err := m.rawSockSend(v, tcp); err != nil {
-				log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
 			tcp.SetInternalPortsForTesting()
-			// pass the info to assembler
+			// pass the info to assembler so ingress flow may match it
 			m.assembler.AssembleWithTimestamp(v.NetworkFlow(), tcp, time.Now())
 		case *layers.IPv6:
 			if err := m.rawSockSend(v, tcp); err != nil {
-				log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
+				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
 			// pass the info to assembler
 			m.assembler.AssembleWithTimestamp(v.NetworkFlow(), tcp, time.Now())
 		default:
 			return fmt.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
 		}
+		if m.forceIncDestPort {
+			dstPort += 1
+		} else if m.incDestPort {
+			// Reading from streamFactory, may need mutex
+			// layers.TCPPort is of uint16, may overflow then round back.
+			m.streamFactory.rwm.RLock()
+			dstPort = m.baseDestPort + uint16(m.streamFactory.recvCount)
+			m.streamFactory.rwm.RUnlock()
+		}
 
-		dstPort += 1
 		sentPackets += 1
 		if sentPackets == m.cmdOpts.Count {
 			log.Infof("Sent %v packets, exiting in 1 second", sentPackets)
 			time.Sleep(1 * time.Second)
-
 			return nil
+		}
+
+		// Update source port number unless asked to stay const
+		if !m.cmdOpts.KeepConstSourcePort {
+			srcPort = (sentPackets + m.cmdOpts.BaseSourcePort) % 65536
 		}
 		select {
 		case <-time.After(m.cmdOpts.Interval):
@@ -401,8 +421,8 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 func (m *packetStreamMgmr) Stream() error {
 	// TODO: support for UDP, ICMP, ....
 	tcp := layers.TCP{
-		SrcPort: layers.TCPPort(m.cmdOpts.BaseSourcePort),
-		DstPort: 0, // will be incremented during the scan
+		SrcPort: 0,
+		DstPort: 0,
 		FIN:     m.cmdOpts.TcpFin,
 		SYN:     m.cmdOpts.TcpSyn,
 		RST:     m.cmdOpts.TcpRst,
