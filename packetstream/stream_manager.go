@@ -81,8 +81,9 @@ func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, ac 
 		isEgress = false
 	}
 	if !isEgress {
-		log.Infof("[%v] found as first packet of TCP session in ingress, ignoring the packet", k)
-		return nil
+		log.Infof("[%v] found as first packet of TCP session in ingress direction", k)
+		// TODO: update gopacket/reassembly so it is possible to ignore certain flows.
+		// return nil
 	}
 
 	// Create a new stream.
