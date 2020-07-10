@@ -198,7 +198,7 @@ func main() {
 				log.Errorf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 				continue
 			}
-			if err := m.Stream(); err != nil {
+			if err := m.StartStream(); err != nil {
 				log.Errorf("Failed to Stream to %v: %v", ip, err)
 			}
 			m.Close()
@@ -223,7 +223,7 @@ func main() {
 		if err != nil {
 			log.Exitf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 		}
-		if err := m.Stream(); err != nil {
+		if err := m.StartStream(); err != nil {
 			log.Exitf("Failed to Stream to random dest IP: %v", err)
 		}
 		m.Close()

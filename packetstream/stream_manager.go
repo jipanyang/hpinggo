@@ -418,7 +418,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 	}
 }
 
-func (m *packetStreamMgmr) Stream() error {
+func (m *packetStreamMgmr) StartStream() error {
 	// TODO: support for UDP, ICMP, ....
 	tcp := layers.TCP{
 		SrcPort: 0,
