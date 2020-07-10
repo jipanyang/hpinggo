@@ -142,6 +142,7 @@ func (s *packetStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reas
 		// update received session count.
 		// TODO: add RTT statistics for session based on CaptureInfo
 		s.factory.updateRecvStats(s.ciIngress, s.ciEgress)
+		log.V(5).Infof("[%v]: The opposite ingress packet arrived", s.key)
 	}
 
 	return true
@@ -385,6 +386,14 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 	dstPort := m.baseDestPort
 	srcPort := m.cmdOpts.BaseSourcePort
 
+	var payload []byte
+	if m.cmdOpts.Data > 0 {
+		payload = make([]byte, m.cmdOpts.Data)
+		for i := range payload {
+			payload[i] = 0xfe
+		}
+	}
+
 	defer func() {
 		fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
 		fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
@@ -401,7 +410,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
-			if err := m.rawSockSend(v, tcp); err != nil {
+			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
 			tcp.SetInternalPortsForTesting()
@@ -410,7 +419,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 			m.assembler.Assemble(v.NetworkFlow(), tcp)
 
 		case *layers.IPv6:
-			if err := m.rawSockSend(v, tcp); err != nil {
+			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
 			// pass the info to assembler so ingress flow may match it

@@ -20,7 +20,12 @@ limitations under the License.
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -ipv6  -i 1ms -S
 
 // stream mode usage
+//
+// No payload and increment destination port unconditionally(-p ++79):
 // sudo hpinggo -target www.google.com  -s 5432 -p ++79 -S -c 2
+//
+// With payload (-d) and increment destination port upon response (-p +80):
+// sudo hpinggo -target www.google.com  -s 5432 -p +80 -S -c 2 -d 512
 
 // for testing with github.com/google/gopacket/reassembly
 // sudo /usr/local/go/bin/go run -a cmd/hpinggo.go -target  192.168.0.1 -s 2000 -p +20005 -S -c 3
@@ -53,6 +58,7 @@ const (
 	DEFAULT_DPORT            = 0   /* default dest. port */
 	DEFAULT_INITSPORT        = -1  /* default initial source port: -1 means random */
 	DEFAULT_COUNT            = -1  /* default packets count: -1 means forever */
+	DEFAULT_DATA_SIZE        = 0   /* default packets data size for applicaction payload*/
 	DEFAULT_TTL              = 64  /* default ip->ttl value */
 	DEFAULT_SRCWINSIZE       = 512 /* default tcp windows size */
 	DEFAULT_VIRTUAL_MTU      = 16  /* tiny fragments */
@@ -84,6 +90,7 @@ func init() {
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.BoolVar(&opt.RandDest, "rand-dest", false, "Enables the random destination mode")
 	flag.BoolVar(&opt.RandSource, "rand-source", false, "Enables the random source mode")
+	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "SSet packet body size")
 	flag.BoolVar(&opt.Ipv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
@@ -107,6 +114,7 @@ func init() {
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.IntVar(&opt.Count, "c", opt.Count, "Short for count.")
 	flag.IntVar(&opt.BaseSourcePort, "s", opt.BaseSourcePort, "Short for baseport.")
+	flag.IntVar(&opt.Data, "d", opt.Data, "Short for data")
 	flag.StringVar(&opt.DestPort, "p", opt.DestPort, "Short for destport.")
 	flag.StringVar(&opt.Interface, "I", opt.Interface, "Short for interface.")
 	flag.StringVar(&opt.Timestamp, "ts", opt.Timestamp, "Short for timestamp.")

@@ -25,6 +25,7 @@ type Options struct {
 	Count      int           // Number of packets to generate, 0 is infinite.
 	RandDest   bool          // Enables the random destination mode
 	RandSource bool          // Enables the random source mode
+	Data       int           // data size
 
 	Delimiter     string // Delimiter between path elements when converted to string.
 	DisplayPrefix string // Prefix for each line of result output.
@@ -126,6 +127,8 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v",
-		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort, opt.KeepConstSourcePort, opt.DestPort)
+	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, "+
+		"BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v, Data: %v",
+		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort,
+		opt.KeepConstSourcePort, opt.DestPort, opt.Data)
 }
