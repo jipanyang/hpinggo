@@ -24,7 +24,7 @@ const (
 	timeout time.Duration = time.Second * 5
 )
 
-// key is used to map bidirectional streams to each other.
+// key is used to identify a TCP session with c2s info.
 // should be applicable to TCP/UDP and other types of stream
 // TODO: how about icmp which doesn't have endpoint type, maybe add extra field in key struct?
 type key struct {
@@ -40,127 +40,144 @@ func (k key) String() string {
 // TODO: Fix reassembly.Stream connection track issue in streamFactory
 // TODO: Support UDP/ICMP and other protocols.
 type packetStream struct {
-	bytes int64 // total bytes seen on this stream.
-	bidi  *bidi // maps to the ingress and egress streams
-	done  bool  // if true, we've seen the last packet we're going to for this stream.
-}
+	key     key            // This is supposed to be client 2 server key, egress in our case.
+	factory *streamFactory // Links back to stream factory
 
-// bidi stores each unidirectional side of a bidirectional stream.
-type bidi struct {
-	key             key           // Key of the first stream, mostly for logging.
-	egress, ingress *packetStream // the two bidirectional streams.
-	lastPacketSeen  time.Time     // last time we saw a packet from either stream.
-	egressTriggered bool          // the stream is triggered by egress flow
+	bytesEgress, bytesIngress, bytes int64                 // Total bytes seen on this stream.
+	ciEgress, ciIngress              *gopacket.CaptureInfo // To stor the CaptureInfo seen on first packet of each direction
+	lastPacketSeen                   time.Time             // last time we saw a packet from either stream.
+	done                             bool                  // if true, we've seen the last packet we're going to for this stream.
 }
 
 // streamFactory implements tcpassmebly.StreamFactory
 type streamFactory struct {
-	// bidiMap maps keys to bidirectional stream pairs.
-	bidiMap      map[key]*bidi
+	streams map[key]*packetStream
+
 	localEnpoint gopacket.Endpoint
 	// the RWMutex is for protecting recvCount (for now) which may be updated in waitPackets
 	// and read in sendPackets
-	rwm       sync.RWMutex
-	recvCount int64
+	mu                     sync.RWMutex
+	recvCount              int64
+	rttMin, rttMax, rttAvg int64
 }
 
 // streamFactory is used by assembly to create a new stream for each
-// new TCP session. creating a new reassembly.Stream.
+// new TCP session which includes both incoming and outgoing flows.
 // TODO: Make use of AssemblerContext and tcp *layers.TCP
 func (f *streamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, ac reassembly.AssemblerContext) reassembly.Stream {
-	// Create a new stream.
-	s := &packetStream{}
-
-	// Find the bidi bidirectional struct for this stream, creating a new one if
-	// one doesn't already exist in the map.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// This is the first packet seen for the tcp session, should be in direction of client to server.
+	// In our case, egress flow
 	k := key{netFlow, tcpFlow}
-	bd := f.bidiMap[k]
-	isEgress := false
-	if f.localEnpoint == netFlow.Src() {
-		isEgress = true
+	if f.streams[k] != nil {
+		log.Errorf("[%v] found existing stream", k)
+		return f.streams[k]
 	}
-	if bd == nil {
-		if isEgress {
-			bd = &bidi{egress: s, key: k, egressTriggered: true}
-			log.V(5).Infof("[%v] created egress side of bidirectional stream", bd.key)
-		} else {
-			bd = &bidi{ingress: s, key: k, egressTriggered: false}
-			log.V(5).Infof("[%v] created ingresss side of bidirectional stream", bd.key)
-		}
-		// Register bidirectional with the reverse key, so the matching stream going
-		// the other direction will find it.
-		f.bidiMap[key{netFlow.Reverse(), tcpFlow.Reverse()}] = bd
-	} else {
-		if isEgress {
-			// We capture ingress packets only,
-			// egress packet is supposed to be earlier than its ingress counterpart
-			log.Errorf("[%v] found egress side of bidirectional stream", bd.key)
-			bd.egress = s
-		} else {
-			log.V(5).Infof("[%v] found ingress side of bidirectional stream", bd.key)
-			bd.ingress = s
-			f.rwm.Lock()
-			f.recvCount += 1
-			f.rwm.Unlock()
-		}
-		// TODO: statistics of rtt, min/max/avg
-		delete(f.bidiMap, k)
+
+	// We deal with session initiated from our side.
+	isEgress := true
+	if f.localEnpoint != netFlow.Src() {
+		isEgress = false
 	}
-	s.bidi = bd
+	if !isEgress {
+		log.Infof("[%v] found as first packet of TCP session in ingress, ignoring the packet", k)
+		return nil
+	}
+
+	// Create a new stream.
+	ci := ac.GetCaptureInfo()
+	s := &packetStream{key: k, ciEgress: &ci, factory: f}
+	f.streams[k] = s
+
+	log.V(5).Infof("[%v] created TCP session", k)
 	return s
+}
+
+func (f *streamFactory) delete(s *packetStream) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	delete(f.streams, s.key) // remove it from our map.
 }
 
 // collectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
 func (f *streamFactory) collectOldStreams() {
 	cutoff := time.Now().Add(-timeout)
-	for k, bd := range f.bidiMap {
-		if bd.lastPacketSeen.Before(cutoff) {
-			log.V(6).Infof("[%v] timing out old stream", bd.key)
-			delete(f.bidiMap, k) // remove it from our map.
-			bd.maybeFinish()     // Do something...?
+	for k, s := range f.streams {
+		if s.lastPacketSeen.Before(cutoff) {
+			log.V(6).Infof("[%v] timing out old session", s.key)
+			delete(f.streams, k) // remove it from our map.
+			s.maybeFinish()      // Do something...?
 		}
 	}
+}
+
+func (f *streamFactory) updateRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recvCount += 1
+
+	delay := int64(ciIngress.Timestamp.Sub(ciEgress.Timestamp) / time.Nanosecond)
+
+	if f.rttMin > delay {
+		f.rttMin = delay
+	}
+	if f.rttMax < delay {
+		f.rttMax = delay
+	}
+	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
 func (s *packetStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassembly.TCPFlowDirection, nextSeq reassembly.Sequence, start *bool, ac reassembly.AssemblerContext) bool {
 	// Tell whether the TCP packet should be accepted, start could be modified to force a start even if no SYN have been seen
 	// TODO: make use of it
+	if dir == reassembly.TCPDirClientToServer {
+		return true
+	}
+	if s.ciIngress == nil {
+		s.ciIngress = &ci
+		// update received session count.
+		// TODO: add RTT statistics for session based on CaptureInfo
+		s.factory.updateRecvStats(s.ciIngress, s.ciEgress)
+	}
+
 	return true
 }
 
+// TODO: add direction to the ReassembledSG() interface
 func (s *packetStream) ReassembledSG(sg reassembly.ScatterGather, ac reassembly.AssemblerContext) {
 	bytes, _ := sg.Lengths()
 	s.bytes += int64(bytes)
 
 	// GetCaptureInfo() gopacket.CaptureInfo
 	c := ac.GetCaptureInfo()
-	if s.bidi.lastPacketSeen.Before(c.Timestamp) {
-		s.bidi.lastPacketSeen = c.Timestamp
+	if s.lastPacketSeen.Before(c.Timestamp) {
+		s.lastPacketSeen = c.Timestamp
 	}
 }
 
 func (s *packetStream) ReassemblyComplete(ac reassembly.AssemblerContext) bool {
 	// TODO: make use of AssemblerContext
 	s.done = true
-	s.bidi.maybeFinish()
+	s.maybeFinish()
+	s.factory.delete(s)
 	return true
 }
 
 // maybeFinish print out stats.
 // TODO: do something more meaningful.
-func (bd *bidi) maybeFinish() {
+func (s *packetStream) maybeFinish() {
 	switch {
-	case bd.egress == nil:
-		log.V(5).Infof("Egress missing: [%v]", bd)
-	case !bd.egress.done:
-		log.V(5).Infof("still waiting on first egress stream: [%v] ", bd)
-	case bd.ingress == nil:
-		log.V(5).Infof("Ingress missing: [%v]", bd)
-	case !bd.ingress.done:
-		log.V(5).Infof("still waiting on first ingress stream: [%v] ", bd)
+	case s.ciEgress == nil:
+		log.Fatalf("Egress missing: [%v]", s)
+	case s.ciIngress == nil:
+		log.V(5).Infof("Ingress missing: [%v]", s)
+	case !s.done:
+		log.V(5).Infof("still waiting on stream: [%v] ", s)
 	default:
-		log.V(5).Infof("[%v] FINISHED, bytes: %d tx, %d rx", bd.key, bd.egress.bytes, bd.ingress.bytes)
+		log.V(5).Infof("[%v] FINISHED, bytes: %d tx, %d rx", s.key, s.bytesEgress, s.bytesIngress)
 	}
 }
 
@@ -207,9 +224,8 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 
 	// Make the option setting available more conveniently
 	m.parseOptions()
-
 	// Set up assembly
-	m.streamFactory = &streamFactory{bidiMap: make(map[key]*bidi), recvCount: 0}
+	m.streamFactory = &streamFactory{streams: make(map[key]*packetStream), recvCount: 0}
 	streamPool := reassembly.NewStreamPool(m.streamFactory)
 	m.assembler = reassembly.NewAssembler(streamPool)
 
@@ -370,8 +386,12 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 
 	defer func() {
 		fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
-
-		fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n", sentPackets, m.streamFactory.recvCount)
+		fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
+			sentPackets, m.streamFactory.recvCount)
+		fmt.Fprintf(os.Stderr, "round-trip min/avg/max = %v/%v/%v\n",
+			time.Duration(m.streamFactory.rttMin)*time.Nanosecond,
+			time.Duration(m.streamFactory.rttAvg)*time.Nanosecond,
+			time.Duration(m.streamFactory.rttMax)*time.Nanosecond)
 	}()
 
 	for {
@@ -402,9 +422,9 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 		if m.forceIncDestPort {
 			dstPort += 1
 		} else if m.incDestPort {
-			m.streamFactory.rwm.RLock()
+			m.streamFactory.mu.RLock()
 			dstPort = m.baseDestPort + uint16(m.streamFactory.recvCount)
-			m.streamFactory.rwm.RUnlock()
+			m.streamFactory.mu.RUnlock()
 		}
 
 		sentPackets += 1
@@ -428,7 +448,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 	}
 }
 
-func (m *packetStreamMgmr) Stream() error {
+func (m *packetStreamMgmr) StartStream() error {
 	// TODO: support for UDP, ICMP, ....
 	tcp := layers.TCP{
 		SrcPort: 0,

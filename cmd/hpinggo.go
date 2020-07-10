@@ -22,6 +22,8 @@ limitations under the License.
 // stream mode usage
 // sudo hpinggo -target www.google.com  -s 5432 -p ++79 -S -c 2
 
+// for testing with github.com/google/gopacket/reassembly
+// sudo /usr/local/go/bin/go run -a cmd/hpinggo.go -target  192.168.0.1 -s 2000 -p +20005 -S -c 3
 package main
 
 import (
@@ -198,7 +200,7 @@ func main() {
 				log.Errorf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 				continue
 			}
-			if err := m.Stream(); err != nil {
+			if err := m.StartStream(); err != nil {
 				log.Errorf("Failed to Stream to %v: %v", ip, err)
 			}
 			m.Close()
@@ -223,7 +225,7 @@ func main() {
 		if err != nil {
 			log.Exitf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 		}
-		if err := m.Stream(); err != nil {
+		if err := m.StartStream(); err != nil {
 			log.Exitf("Failed to Stream to random dest IP: %v", err)
 		}
 		m.Close()
