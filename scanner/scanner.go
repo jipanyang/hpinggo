@@ -95,7 +95,7 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 		var ipConn net.PacketConn
 		var err error
 
-		if s.cmdOpts.Ipv6 {
+		if s.cmdOpts.IPv6 {
 			ipConn, err = net.ListenPacket("ip6:tcp", "::")
 		} else {
 			ipConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
@@ -141,7 +141,7 @@ func (s *scanner) Scan() error {
 			return err
 		}
 		var ethType layers.EthernetType = layers.EthernetTypeIPv4
-		if s.cmdOpts.Ipv6 {
+		if s.cmdOpts.IPv6 {
 			ethType = layers.EthernetTypeIPv6
 		}
 		// Construct all the network layers we need.
@@ -169,7 +169,7 @@ func (s *scanner) Scan() error {
 	var ipv6 layers.IPv6
 	var ipv4 layers.IPv4
 
-	if s.cmdOpts.Ipv6 {
+	if s.cmdOpts.IPv6 {
 		ipv6 = layers.IPv6{
 			SrcIP:      s.src,
 			DstIP:      s.dst,
@@ -193,7 +193,7 @@ func (s *scanner) Scan() error {
 	// against it and discard useless packets.
 	var endpointType gopacket.EndpointType
 	endpointType = layers.EndpointIPv4
-	if s.cmdOpts.Ipv6 {
+	if s.cmdOpts.IPv6 {
 		endpointType = layers.EndpointIPv6
 	}
 	ipFlow := gopacket.NewFlow(endpointType, s.dst, s.src)
@@ -203,7 +203,7 @@ func (s *scanner) Scan() error {
 	go s.receiver(ipFlow, stop)
 	defer close(stop)
 	log.Infof("Start Scan, time: %v", time.Now())
-	if s.cmdOpts.Ipv6 {
+	if s.cmdOpts.IPv6 {
 		s.sender(&eth, &ipv6, &tcp)
 	} else {
 		s.sender(&eth, &ipv4, &tcp)
@@ -298,7 +298,7 @@ func (s *scanner) open_pcap() {
 // reply.  This is pretty slow right now, since it blocks on the ARP
 // request/reply.
 func (s *scanner) getHwAddr() (net.HardwareAddr, error) {
-	if s.cmdOpts.Ipv6 {
+	if s.cmdOpts.IPv6 {
 		return s.getHwAddrWithNs()
 	}
 	start := time.Now()
@@ -598,7 +598,7 @@ func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
 
 	ip := []byte(s.dst)
 
-	if !s.cmdOpts.Ipv6 {
+	if !s.cmdOpts.IPv6 {
 
 		var dstIp [4]byte
 		copy(dstIp[:], ip[:4])

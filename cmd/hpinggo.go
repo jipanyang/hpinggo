@@ -88,10 +88,10 @@ func init() {
 	flag.StringVar(&opt.DisplayPrefix, "display_prefix", "", "Per output line prefix.")
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
-	flag.BoolVar(&opt.RandDest, "rand-dest", false, "Enables the random destination mode")
+	flag.StringVar(&opt.RandDest, "rand-dest", "", "Enables the random destination mode, x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.BoolVar(&opt.RandSource, "rand-source", false, "Enables the random source mode")
 	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "SSet packet body size")
-	flag.BoolVar(&opt.Ipv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
+	flag.BoolVar(&opt.IPv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
@@ -144,9 +144,11 @@ func main() {
 		cancel()
 	}()
 
+	displayOptions(ctx, opt)
+
 	var ips []net.IP
 	// Get remote target addresses
-	if !opt.RandDest {
+	if opt.RandDest == "" {
 		if *target == "" {
 			log.Exitf("Remote target missing\n")
 		}
@@ -174,7 +176,7 @@ func main() {
 	defer util.Run()()
 
 	for idx, ip := range ips {
-		if !opt.Ipv6 {
+		if !opt.IPv6 {
 			if ip = ip.To4(); ip == nil {
 				log.Errorf("non-ipv4: %v\n", ips[idx])
 				continue
@@ -222,9 +224,9 @@ func main() {
 		}
 	}
 
-	if opt.RandDest {
+	if opt.RandDest != "" {
 		var ip net.IP
-		if opt.Ipv6 {
+		if opt.IPv6 {
 			ip = net.IPv6zero
 		} else {
 			ip = net.IPv4zero
@@ -238,32 +240,6 @@ func main() {
 		}
 		m.Close()
 	}
-
-	// Get local addresses
-	// TODO: make the library functions in separate libraries
-	var addrs []net.Addr
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		panic(err)
-	}
-
-	for idx, iface := range interfaces {
-		ifAddrs, err := iface.Addrs()
-		if err != nil {
-			log.Exitf("Could not get interface address: %v\n", err)
-		}
-
-		if opt.Interface == "" {
-			// TODO: get local addresses when no interface specified
-		} else if opt.Interface == iface.Name {
-			addrs = ifAddrs
-		}
-		for j, addr := range ifAddrs {
-			log.V(1).Infof("iface: %d name=%s %v, addr: %d %v\n", idx, iface.Name, iface, j, addr)
-		}
-	}
-	log.Infof("To use addrs: %v\n", addrs)
-
 }
 
 func displayOptions(ctx context.Context, opt options.Options) error {
@@ -271,11 +247,11 @@ func displayOptions(ctx context.Context, opt options.Options) error {
 	return nil
 }
 
-// TODO: support AF_INET6 for ipv6 based on opt.Ipv6
+// TODO: support AF_INET6 for ipv6 based on opt.IPv6
 func open_sockraw() int {
 	var domain int
 
-	if opt.Ipv6 {
+	if opt.IPv6 {
 		domain = unix.AF_INET6
 	} else {
 		domain = unix.AF_INET
@@ -291,7 +267,7 @@ func open_sockraw() int {
 		log.Exitf("error enabling SO_BROADCAST: %v\n", err)
 	}
 
-	if opt.Ipv6 {
+	if opt.IPv6 {
 		err = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_HDRINCL, 1)
 	} else {
 		err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)

@@ -21,11 +21,13 @@ import (
 
 // Options is a type to hold parameters that affect how hpinggo generate and analyze packets
 type Options struct {
-	Interval   time.Duration // Interval between sending each packet.
-	Count      int           // Number of packets to generate, 0 is infinite.
-	RandDest   bool          // Enables the random destination mode
-	RandSource bool          // Enables the random source mode
-	Data       int           // data size
+	Interval time.Duration // Interval between sending each packet.
+	Count    int           // Number of packets to generate, 0 is infinite.
+	// If specified (in format like x.x.x.x, 192,168.x.x, 128.x.x.255),
+	// enables the random destination mode
+	RandDest   string
+	RandSource bool // Enables the random source mode
+	Data       int  // data size
 
 	Delimiter     string // Delimiter between path elements when converted to string.
 	DisplayPrefix string // Prefix for each line of result output.
@@ -40,7 +42,7 @@ type Options struct {
 	// raw - int64 nanos since epoch
 	// <FORMAT> - human readable timestamp according to <FORMAT>
 	Timestamp string // Formatting of timestamp in result output.
-	Ipv6      bool   // run in ipv6 mode
+	IPv6      bool   // run in ipv6 mode
 
 	// RAW IP mode, in this mode it will send IP header with data appended with
 	// --signature and/or --file, see also --ipproto that allows you to set the ip protocol field.
@@ -127,8 +129,8 @@ func (opt Options) String() string {
 	if tcpFlags != "" {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
-	return fmt.Sprintf("Interval: %v, Interface: %v, Ipv6: %v, TcpFlags: %v, "+
+	return fmt.Sprintf("Interval: %v, Interface: %v, IPv6: %v, TcpFlags: %v, "+
 		"BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v, Data: %v",
-		opt.Interval, opt.Interface, opt.Ipv6, tcpFlags, opt.BaseSourcePort,
+		opt.Interval, opt.Interface, opt.IPv6, tcpFlags, opt.BaseSourcePort,
 		opt.KeepConstSourcePort, opt.DestPort, opt.Data)
 }

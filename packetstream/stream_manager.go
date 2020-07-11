@@ -10,9 +10,11 @@ import (
 	"github.com/google/gopacket/reassembly"
 	"github.com/google/gopacket/routing"
 	"github.com/jipanyang/hpinggo/options"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -183,6 +185,40 @@ func (s *packetStream) maybeFinish() {
 	}
 }
 
+// TODO: more comprehensive sanity check
+func randIpSanityCheck(ipStr string, isIPv6 bool) bool {
+	if !isIPv6 {
+		octets := strings.Split(ipStr, ".")
+		if len(octets) != net.IPv4len {
+			return false
+		}
+	} else {
+		twoOctets := strings.Split(ipStr, ":")
+		if len(twoOctets) < 2 || len(twoOctets) > net.IPv6len/2 {
+			return false
+		}
+	}
+	return true
+}
+
+func setNextRandomIPv4Dest(randDest string, ipv4 *layers.IPv4) {
+	octets := strings.Split(randDest, ".")
+	ipStr := ""
+	for _, octet := range octets {
+		if octet == "x" {
+			ipStr += strconv.Itoa(rand.Intn(256)) + "."
+		} else {
+			ipStr += octet + "."
+		}
+	}
+	last := len(ipStr) - 1
+	ipStr = ipStr[:last]
+	ipv4.DstIP = net.ParseIP(ipStr)
+	if ipv4.DstIP == nil {
+		panic("Failed to get random IP")
+	}
+}
+
 type packetStreamMgmr struct {
 	ctx context.Context
 	// iface is the interface to send packets on.
@@ -247,11 +283,44 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 		if err != nil {
 			return nil, err
 		}
-		log.Infof("Streaming to dstIp %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
+		log.Infof("Streaming to destination %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
 			dstIp, iface.Name, gw, src, m.cmdOpts)
 		m.gw, m.src, m.iface = gw, src, iface
 
 		m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
+	} else {
+		if !randIpSanityCheck(opt.RandDest, opt.IPv6) {
+			log.Exitf("Invalid random IP %v\n", opt.RandDest)
+		}
+		// The interface has to be specificed.
+		if opt.Interface == "" {
+			log.Exitf("Should specify interface in rand-dest mode\n")
+		}
+		iface, err := net.InterfaceByName(opt.Interface)
+		if err != nil {
+			log.Exitf("Invalid interface name: %v\n", err)
+		}
+		ifAddrs, err := iface.Addrs()
+		if err != nil {
+			log.Exitf("Interface: %v %v\n", iface, err)
+		} else {
+			log.Infof("Interface: %v, Addresses: %v\n", iface, ifAddrs)
+		}
+		m.iface = iface
+		// TODO: IsGlobalUnicast() vs IsLinkLocalUnicast()?
+		for _, addr := range ifAddrs {
+			src := addr.(*net.IPNet).IP
+			if src.To4() != nil && !opt.IPv6 {
+				m.src = src
+				break
+			}
+			if src.To4() == nil && src.To16() != nil && opt.IPv6 {
+				m.src = src
+				break
+			}
+		}
+		log.Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
+			opt.RandDest, m.iface.Name, m.src, m.cmdOpts)
 	}
 
 	m.open_pcap()
@@ -312,12 +381,17 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 	}
 	packetData := m.buf.Bytes()
 
-	ip := []byte(m.dst)
+	var ip net.IP
+	switch v := l[0].(type) {
+	case *layers.IPv4:
+		ip = v.DstIP
+	case *layers.IPv6:
+		ip = v.DstIP
+	}
 
-	if !m.cmdOpts.Ipv6 {
+	if !m.cmdOpts.IPv6 {
 		var dstIp [4]byte
 		copy(dstIp[:], ip[:4])
-
 		addr := syscall.SockaddrInet4{
 			Port: 0,
 			Addr: dstIp,
@@ -410,6 +484,9 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
+			if m.cmdOpts.RandDest != "" {
+				setNextRandomIPv4Dest(m.cmdOpts.RandDest, v)
+			}
 			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
 			}
@@ -477,7 +554,7 @@ func (m *packetStreamMgmr) StartStream() error {
 	// var networkLayer gopacket.NetworkLayer
 	var ipv6 layers.IPv6
 	var ipv4 layers.IPv4
-	if m.cmdOpts.Ipv6 {
+	if m.cmdOpts.IPv6 {
 		ipv6 = layers.IPv6{
 			SrcIP:      m.src,
 			DstIP:      m.dst,
@@ -502,7 +579,7 @@ func (m *packetStreamMgmr) StartStream() error {
 	go m.waitPackets(stop)
 	defer close(stop)
 	log.Infof("Start Streaming, time: %v", time.Now())
-	if m.cmdOpts.Ipv6 {
+	if m.cmdOpts.IPv6 {
 		m.sendPackets(&ipv6, &tcp)
 	} else {
 		m.sendPackets(&ipv4, &tcp)
