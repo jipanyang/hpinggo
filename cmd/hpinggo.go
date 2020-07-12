@@ -89,7 +89,7 @@ func init() {
 	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.StringVar(&opt.RandDest, "rand-dest", "", "Enables the random destination mode, x.x.x.x, 192,168.x.x, 128.x.x.255")
-	flag.BoolVar(&opt.RandSource, "rand-source", false, "Enables the random source mode")
+	flag.StringVar(&opt.RandSource, "rand-source", "", "Enables the random source mode,  x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "SSet packet body size")
 	flag.BoolVar(&opt.IPv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")

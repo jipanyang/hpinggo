@@ -26,8 +26,8 @@ type Options struct {
 	// If specified (in format like x.x.x.x, 192,168.x.x, 128.x.x.255),
 	// enables the random destination mode
 	RandDest   string
-	RandSource bool // Enables the random source mode
-	Data       int  // data size
+	RandSource string // Enables the random source mode
+	Data       int    // data size
 
 	Delimiter     string // Delimiter between path elements when converted to string.
 	DisplayPrefix string // Prefix for each line of result output.
@@ -130,7 +130,8 @@ func (opt Options) String() string {
 		tcpFlags = tcpFlags[:len(tcpFlags)-1]
 	}
 	return fmt.Sprintf("Interval: %v, Interface: %v, IPv6: %v, TcpFlags: %v, "+
-		"BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v, Data: %v",
+		"BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v, Data: %v "+
+		"RandDest: %v, RandSource: %v",
 		opt.Interval, opt.Interface, opt.IPv6, tcpFlags, opt.BaseSourcePort,
-		opt.KeepConstSourcePort, opt.DestPort, opt.Data)
+		opt.KeepConstSourcePort, opt.DestPort, opt.Data, opt.RandDest, opt.RandSource)
 }

@@ -201,7 +201,8 @@ func randIpSanityCheck(ipStr string, isIPv6 bool) bool {
 	return true
 }
 
-func setNextRandomIPv4Dest(randDest string, ipv4 *layers.IPv4) {
+// Get one
+func getRandomIPv4(randDest string) net.IP {
 	octets := strings.Split(randDest, ".")
 	ipStr := ""
 	for _, octet := range octets {
@@ -213,10 +214,7 @@ func setNextRandomIPv4Dest(randDest string, ipv4 *layers.IPv4) {
 	}
 	last := len(ipStr) - 1
 	ipStr = ipStr[:last]
-	ipv4.DstIP = net.ParseIP(ipStr)
-	if ipv4.DstIP == nil {
-		panic("Failed to get random IP")
-	}
+	return net.ParseIP(ipStr)
 }
 
 type packetStreamMgmr struct {
@@ -485,7 +483,16 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
 			if m.cmdOpts.RandDest != "" {
-				setNextRandomIPv4Dest(m.cmdOpts.RandDest, v)
+				v.DstIP = getRandomIPv4(m.cmdOpts.RandDest)
+				if v.DstIP == nil {
+					panic("Failed to get random IP")
+				}
+			}
+			if m.cmdOpts.RandSource != "" {
+				v.SrcIP = getRandomIPv4(m.cmdOpts.RandSource)
+				if v.SrcIP == nil {
+					panic("Failed to get random IP")
+				}
 			}
 			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
