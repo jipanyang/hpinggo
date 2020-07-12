@@ -7,7 +7,6 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/reassembly"
 	"github.com/google/gopacket/routing"
 	"github.com/jipanyang/hpinggo/options"
 	"math/rand"
@@ -24,6 +23,24 @@ const (
 	// TODO: change it to counterReachedTimeOut
 	timeout time.Duration = time.Second * 5
 )
+
+// Interface for transport layer processing
+type streamTransportLayer interface {
+	// Prepare transport layer before it could be serialized to wire format
+	// TODO: It violates "Accept interfaces, return structs"
+	prepareTransportLayer(gopacket.NetworkLayer) gopacket.TransportLayer
+	// Post processing after the packet is sent.
+	postSend(gopacket.NetworkLayer, gopacket.TransportLayer)
+	// Post processing after a packet is received.
+	postReceive(gopacket.Packet)
+
+	// Inform trasport layer of its local end point for checking flow direction.
+	setLocalEnpoint(gopacket.Endpoint)
+
+	collectOldStreams(time.Duration)
+
+	showStats()
+}
 
 // key is used to identify a TCP session with c2s info.
 // should be applicable to TCP/UDP and other types of stream
@@ -87,20 +104,15 @@ type packetStreamMgmr struct {
 	packetOpts gopacket.SerializeOptions
 	buf        gopacket.SerializeBuffer
 
-	streamFactory *streamFactory
-	assembler     *reassembly.Assembler
+	streamFactory streamTransportLayer
 
 	// options specified at user command line
 	cmdOpts options.Options
-	// convenient variables derived from options
-	baseDestPort     uint16
-	incDestPort      bool
-	forceIncDestPort bool
 }
 
-func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt options.Options) (*packetStreamMgmr, error) {
+func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.Options) (*packetStreamMgmr, error) {
 	m := &packetStreamMgmr{
-		ctx:      ctxParent,
+		ctx:      ctx,
 		dst:      dstIp,
 		socketFd: fd,
 		packetOpts: gopacket.SerializeOptions{
@@ -111,17 +123,7 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 		cmdOpts: opt,
 	}
 
-	// Make the option setting available more conveniently
-	m.parseOptions()
-	// Set up assembly
-	m.streamFactory = &streamFactory{streams: make(map[key]*tcpStream), recvCount: 0}
-	streamPool := reassembly.NewStreamPool(m.streamFactory)
-	m.assembler = reassembly.NewAssembler(streamPool)
-
-	// Limit memory usage by auto-flushing connection state if we get over 100K
-	// packets in memory, or over 1000 for a single stream.
-	m.assembler.MaxBufferedPagesTotal = 100000
-	m.assembler.MaxBufferedPagesPerConnection = 1000
+	m.streamFactory = newTcpStreamFactory(ctx, opt)
 
 	if !dstIp.IsUnspecified() {
 		// Figure out the route to the IP.
@@ -137,8 +139,6 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 		log.Infof("Streaming to destination %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
 			dstIp, iface.Name, gw, src, m.cmdOpts)
 		m.gw, m.src, m.iface = gw, src, iface
-
-		m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
 	} else {
 		if !randIpSanityCheck(opt.RandDest, opt.IPv6) {
 			log.Exitf("Invalid random IP %v\n", opt.RandDest)
@@ -173,29 +173,15 @@ func NewPacketStreamMgmr(ctxParent context.Context, dstIp net.IP, fd int, opt op
 		log.Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
 			opt.RandDest, m.iface.Name, m.src, m.cmdOpts)
 	}
-
+	// m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
+	m.streamFactory.setLocalEnpoint(layers.NewIPEndpoint(m.src))
 	m.open_pcap()
 
 	return m, nil
 }
 
 func (m *packetStreamMgmr) parseOptions() {
-	destPortStr := m.cmdOpts.DestPort
-
-	if destPortStr[:1] == "+" {
-		m.incDestPort = true
-		destPortStr = destPortStr[1:]
-	}
-	if destPortStr[:1] == "+" {
-		m.forceIncDestPort = true
-		destPortStr = destPortStr[1:]
-	}
-
-	port, err := strconv.Atoi(destPortStr)
-	if err != nil {
-		log.Exitf("Invalid dest port: %v, %v\n", m.cmdOpts.DestPort, err)
-	}
-	m.baseDestPort = uint16(port)
+	//TODO: add as needed
 }
 
 func (m *packetStreamMgmr) open_pcap() {
@@ -275,24 +261,12 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 	for {
 		select {
 		case packet := <-in:
-
-			log.V(7).Infof("%v", packet)
-			if packet.NetworkLayer() == nil || packet.TransportLayer() == nil || packet.TransportLayer().LayerType() != layers.LayerTypeTCP {
-				log.Errorf("Unusable packet: %v", packet)
-				continue
-			}
-			tcp := packet.TransportLayer().(*layers.TCP)
-
-			// ctx := packet.Metadata()
-			// m.assembler.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, ctx)
-			m.assembler.Assemble(packet.NetworkLayer().NetworkFlow(), tcp)
-
+			m.streamFactory.postReceive(packet)
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
 			log.Infof("---- FLUSHING ----")
-
-			m.assembler.FlushCloseOlderThan(time.Now().Add(-timeout))
-			m.streamFactory.collectOldStreams()
+			// m.assembler.FlushCloseOlderThan(time.Now().Add(-timeout))
+			m.streamFactory.collectOldStreams(timeout)
 
 		case <-stop:
 			return
@@ -300,16 +274,10 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 	}
 }
 
-func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transportLayer gopacket.TransportLayer) error {
-	// TODO: support rand dest and rand source.
+func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 	// TODO: support raw IP, icmp and UDP
 	// TODO: support varying packet data content and size
 	sentPackets := 0
-	// TODO: Support more transport layer. Assuming TCP only for now.
-	tcp := transportLayer.(*layers.TCP)
-	// TODO: Support --destport [+][+]dest port
-	dstPort := m.baseDestPort
-	srcPort := m.cmdOpts.BaseSourcePort
 
 	var payload []byte
 	if m.cmdOpts.Data > 0 {
@@ -319,19 +287,9 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 		}
 	}
 
-	defer func() {
-		fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
-		fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
-			sentPackets, m.streamFactory.recvCount)
-		fmt.Fprintf(os.Stderr, "round-trip min/avg/max = %v/%v/%v\n",
-			time.Duration(m.streamFactory.rttMin)*time.Nanosecond,
-			time.Duration(m.streamFactory.rttAvg)*time.Nanosecond,
-			time.Duration(m.streamFactory.rttMax)*time.Nanosecond)
-	}()
-
+	defer m.streamFactory.showStats()
 	for {
-		tcp.DstPort = layers.TCPPort(dstPort)
-		tcp.SrcPort = layers.TCPPort(srcPort)
+		t := m.streamFactory.prepareTransportLayer(netLayer)
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
@@ -347,31 +305,21 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 					panic("Failed to get random IP")
 				}
 			}
-			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
+			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
+			} else {
+				m.streamFactory.postSend(v, t)
 			}
-			tcp.SetInternalPortsForTesting()
-			// pass the info to assembler so ingress flow may match it
-
-			m.assembler.Assemble(v.NetworkFlow(), tcp)
 
 		case *layers.IPv6:
-			if err := m.rawSockSend(v, tcp, gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v->%v: %v", tcp.SrcPort, tcp.DstPort, err)
+			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
+			} else {
+				m.streamFactory.postSend(v, t)
 			}
-			// pass the info to assembler so ingress flow may match it
-
-			m.assembler.Assemble(v.NetworkFlow(), tcp)
 
 		default:
-			return fmt.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
-		}
-		if m.forceIncDestPort {
-			dstPort += 1
-		} else if m.incDestPort {
-			m.streamFactory.mu.RLock()
-			dstPort = m.baseDestPort + uint16(m.streamFactory.recvCount)
-			m.streamFactory.mu.RUnlock()
+			return fmt.Errorf("cannot use layer type %v for checksum network layer", netLayer.LayerType())
 		}
 
 		sentPackets += 1
@@ -381,10 +329,6 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 			return nil
 		}
 
-		// Update source port number unless asked to stay const
-		if !m.cmdOpts.KeepConstSourcePort {
-			srcPort = (sentPackets + m.cmdOpts.BaseSourcePort) % 65536
-		}
 		select {
 		case <-time.After(m.cmdOpts.Interval):
 			continue
@@ -396,21 +340,6 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer, transport
 }
 
 func (m *packetStreamMgmr) StartStream() error {
-	// TODO: support for UDP, ICMP, ....
-	tcp := layers.TCP{
-		SrcPort: 0,
-		DstPort: 0,
-		FIN:     m.cmdOpts.TcpFin,
-		SYN:     m.cmdOpts.TcpSyn,
-		RST:     m.cmdOpts.TcpRst,
-		PSH:     m.cmdOpts.TcpPush,
-		ACK:     m.cmdOpts.TcpAck,
-		URG:     m.cmdOpts.TcpUrg,
-		ECE:     m.cmdOpts.TcpEce,
-		CWR:     m.cmdOpts.TcpCwr,
-		NS:      m.cmdOpts.TcpNs,
-	}
-
 	// var networkLayer gopacket.NetworkLayer
 	var ipv6 layers.IPv6
 	var ipv4 layers.IPv4
@@ -422,7 +351,6 @@ func (m *packetStreamMgmr) StartStream() error {
 			HopLimit:   255,
 			NextHeader: layers.IPProtocolTCP,
 		}
-		tcp.SetNetworkLayerForChecksum(&ipv6)
 	} else {
 		ipv4 = layers.IPv4{
 			SrcIP:    m.src,
@@ -431,7 +359,6 @@ func (m *packetStreamMgmr) StartStream() error {
 			TTL:      64,
 			Protocol: layers.IPProtocolTCP,
 		}
-		tcp.SetNetworkLayerForChecksum(&ipv4)
 	}
 
 	// Start up a goroutine to read in packet data.
@@ -440,9 +367,9 @@ func (m *packetStreamMgmr) StartStream() error {
 	defer close(stop)
 	log.Infof("Start Streaming, time: %v", time.Now())
 	if m.cmdOpts.IPv6 {
-		m.sendPackets(&ipv6, &tcp)
+		m.sendPackets(&ipv6)
 	} else {
-		m.sendPackets(&ipv4, &tcp)
+		m.sendPackets(&ipv4)
 	}
 
 	log.Infof("Return from Stream, socketFd: %v, time: %v", m.socketFd, time.Now())
