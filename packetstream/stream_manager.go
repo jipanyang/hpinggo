@@ -27,10 +27,9 @@ const (
 // Interface for transport layer processing
 type streamTransportLayer interface {
 	// Prepare transport layer before it could be serialized to wire format
-	// TODO: It violates "Accept interfaces, return structs"
 	prepareTransportLayer(gopacket.NetworkLayer) gopacket.TransportLayer
 	// Post processing after the packet is sent.
-	postSend(gopacket.NetworkLayer, gopacket.TransportLayer)
+	postSend(gopacket.NetworkLayer, gopacket.TransportLayer, []byte)
 	// Post processing after a packet is received.
 	postReceive(gopacket.Packet)
 
@@ -123,7 +122,11 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 		cmdOpts: opt,
 	}
 
-	m.streamFactory = newTcpStreamFactory(ctx, opt)
+	if opt.Udp {
+		m.streamFactory = newUdpStreamFactory(ctx, opt)
+	} else {
+		m.streamFactory = newTcpStreamFactory(ctx, opt)
+	}
 
 	if !dstIp.IsUnspecified() {
 		// Figure out the route to the IP.
@@ -204,7 +207,13 @@ func (m *packetStreamMgmr) open_pcap() {
 	// TODO: support other protocals
 	// TODO: Fix first ingress packet drop issue
 	// https://www.pico.net/kb/how-does-one-use-tcpdump-to-capture-incoming-traffic
-	bpffilter := fmt.Sprintf("inbound and tcp")
+	var bpffilter string
+	if m.cmdOpts.Udp {
+		bpffilter = fmt.Sprintf("udp or icmp and inbound")
+	} else {
+		bpffilter = fmt.Sprintf("tcp or icmp and inbound")
+	}
+
 	log.Infof("Using BPF filter %q\n", bpffilter)
 	if err := m.handle.SetBPFFilter(bpffilter); err != nil {
 		log.Exitf("SetBPFFilter: %v\n", err)
@@ -305,17 +314,18 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 					panic("Failed to get random IP")
 				}
 			}
+
 			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
 			} else {
-				m.streamFactory.postSend(v, t)
+				m.streamFactory.postSend(v, t, payload)
 			}
 
 		case *layers.IPv6:
 			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
 			} else {
-				m.streamFactory.postSend(v, t)
+				m.streamFactory.postSend(v, t, payload)
 			}
 
 		default:

@@ -131,6 +131,21 @@ func (f *tcpStreamFactory) parseOptions() {
 }
 
 func (f *tcpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer) gopacket.TransportLayer {
+	// Prepare for next call, this makes tcpStreamFactory stateful
+	if f.forceIncDestPort {
+		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
+	} else if f.incDestPort {
+		// recvCount may be updated in another routine, protect it with read lock
+		f.mu.RLock()
+		f.dstPort = f.baseDestPort + uint16(f.recvCount)
+		f.mu.RUnlock()
+	}
+
+	// Update source port number unless asked to stay const
+	if !f.cmdOpts.KeepConstSourcePort {
+		f.srcPort = uint16(f.cmdOpts.BaseSourcePort) + uint16(f.sentPackets)
+	}
+
 	// TODO: populating the whole tcp layer every time, improve it?
 	tcp := &layers.TCP{
 		SrcPort: 0,
@@ -148,25 +163,10 @@ func (f *tcpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer)
 	tcp.SetNetworkLayerForChecksum(netLayer)
 	tcp.DstPort = layers.TCPPort(f.dstPort)
 	tcp.SrcPort = layers.TCPPort(f.srcPort)
-
-	// Prepare for next call, this makes tcpStreamFactory stateful
-	if f.forceIncDestPort {
-		f.dstPort += 1
-	} else if f.incDestPort {
-		// recvCount may be updated in another routine, protect it with read lock
-		f.mu.RLock()
-		f.dstPort = f.baseDestPort + uint16(f.recvCount)
-		f.mu.RUnlock()
-	}
-
-	// Update source port number unless asked to stay const
-	if !f.cmdOpts.KeepConstSourcePort {
-		f.srcPort = f.srcPort + 1
-	}
 	return tcp
 }
 
-func (f *tcpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.TransportLayer) {
+func (f *tcpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.TransportLayer, payload []byte) {
 	f.sentPackets += 1
 	tcp := transportLayer.(*layers.TCP)
 	tcp.SetInternalPortsForTesting()
@@ -174,6 +174,7 @@ func (f *tcpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLay
 	f.assembler.Assemble(netLayer.NetworkFlow(), tcp)
 }
 
+// TODO: check sequence number of each packet sent or received.
 func (f *tcpStreamFactory) postReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 	if packet.NetworkLayer() == nil || packet.TransportLayer() == nil ||
@@ -205,7 +206,7 @@ func (f *tcpStreamFactory) collectOldStreams(timeout time.Duration) {
 	}
 }
 
-func (f *tcpStreamFactory) updateRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
+func (f *tcpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.recvCount += 1
@@ -231,7 +232,7 @@ func (f *tcpStreamFactory) showStats() {
 		time.Duration(f.rttMax)*time.Nanosecond)
 }
 
-// tcpStream implements reassembly.Stream amd tcpassembly/Strea,
+// tcpStream implements reassembly.Stream
 // TODO: Fix reassembly.Stream connection track issue in tcpStreamFactory
 // TODO: Support UDP/ICMP and other protocols.
 type tcpStream struct {
@@ -254,7 +255,7 @@ func (s *tcpStream) Accept(tcp *layers.TCP, ci gopacket.CaptureInfo, dir reassem
 		s.ciIngress = &ci
 		// update received session count.
 		// TODO: add RTT statistics for session based on CaptureInfo
-		s.factory.updateRecvStats(s.ciIngress, s.ciEgress)
+		s.factory.updateStreamRecvStats(s.ciIngress, s.ciEgress)
 		log.V(5).Infof("[%v]: The opposite ingress packet arrived", s.key)
 	}
 

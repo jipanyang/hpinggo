@@ -96,6 +96,8 @@ func init() {
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
+	flag.BoolVar(&opt.Udp, "udp", false, "When set, stream in UDP mode")
+
 	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
 	flag.IntVar(&opt.BaseSourcePort, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")
 	flag.BoolVar(&opt.KeepConstSourcePort, "keep", false, "When set, keep const source port")
