@@ -24,14 +24,16 @@ const (
 	timeout time.Duration = time.Second * 5
 )
 
-// Interface for transport layer processing
-type streamTransportLayer interface {
-	// Prepare transport layer before it could be serialized to wire format
-	prepareTransportLayer(gopacket.NetworkLayer) gopacket.TransportLayer
+// Interface for protocal layer stream processing.
+// Assuming the protocol runs above IP layer immediately,
+// Could be TransportLayer protocols lik TCP/UDP or control protocols like ICMPv4/ICMPv6
+type streamProtoLayer interface {
+	// Prepare protocal layer before it could be serialized to wire format
+	prepareProtocalLayer(gopacket.NetworkLayer) gopacket.Layer
 	// Post processing after the packet is sent.
-	postSend(gopacket.NetworkLayer, gopacket.TransportLayer, []byte)
+	onSend(gopacket.NetworkLayer, gopacket.Layer, []byte)
 	// Post processing after a packet is received.
-	postReceive(gopacket.Packet)
+	onReceive(gopacket.Packet)
 
 	// Inform trasport layer of its local end point for checking flow direction.
 	setLocalEnpoint(gopacket.Endpoint)
@@ -103,7 +105,7 @@ type packetStreamMgmr struct {
 	packetOpts gopacket.SerializeOptions
 	buf        gopacket.SerializeBuffer
 
-	streamFactory streamTransportLayer
+	streamFactory streamProtoLayer
 
 	// options specified at user command line
 	cmdOpts options.Options
@@ -270,7 +272,7 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 	for {
 		select {
 		case packet := <-in:
-			m.streamFactory.postReceive(packet)
+			m.streamFactory.onReceive(packet)
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
 			log.Infof("---- FLUSHING ----")
@@ -298,7 +300,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 
 	defer m.streamFactory.showStats()
 	for {
-		t := m.streamFactory.prepareTransportLayer(netLayer)
+		t := m.streamFactory.prepareProtocalLayer(netLayer)
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
@@ -316,16 +318,16 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 			}
 
 			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t, err)
 			} else {
-				m.streamFactory.postSend(v, t, payload)
+				m.streamFactory.onSend(v, t, payload)
 			}
 
 		case *layers.IPv6:
 			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t.TransportFlow(), err)
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t, err)
 			} else {
-				m.streamFactory.postSend(v, t, payload)
+				m.streamFactory.onSend(v, t, payload)
 			}
 
 		default:

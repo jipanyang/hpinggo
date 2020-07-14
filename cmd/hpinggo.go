@@ -113,6 +113,11 @@ func init() {
 	flag.BoolVar(&opt.TcpCwr, "cwr", false, "Set tcp CWR flag")
 	flag.BoolVar(&opt.TcpNs, "ns", false, "Set tcp NS flag")
 
+	flag.IntVar(&opt.IcmpType, "icmptype", 8, "Set icmp type, default is ICMP echo request (implies -Icmp")
+	flag.IntVar(&opt.IcmpCode, "icmpcode", 0, "Set icmp code, default is 0 (implies -icmp).")
+	flag.IntVar(&opt.Icmpv6Type, "icmpv6type", 128, "Set icmpv6 type, default is ICMP echo request (implies -Icmp")
+	flag.IntVar(&opt.Icmpv6Code, "icmpv6code", 0, "Set icmpv6 code, default is 0 (implies -icmp).")
+
 	// Shortcut flags that can be used in place of the longform flags above.
 	flag.IntVar(&opt.Count, "c", opt.Count, "Short for count.")
 	flag.IntVar(&opt.BaseSourcePort, "s", opt.BaseSourcePort, "Short for baseport.")
@@ -206,7 +211,6 @@ func main() {
 			}
 			s.Close()
 		} else {
-			// TODO: support random dest IP and source IP
 			m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
 			if err != nil {
 				log.Errorf("Failed to create PacketStreamMgmr for %v: %v", ip, err)

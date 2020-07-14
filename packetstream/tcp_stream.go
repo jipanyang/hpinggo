@@ -15,7 +15,7 @@ import (
 )
 
 // tcpStreamFactory implements reassembly.StreamFactory
-// It also implement streamTransportLayer interface
+// It also implement streamProtoLayer interface
 type tcpStreamFactory struct {
 	ctx       context.Context
 	streams   map[key]*tcpStream
@@ -130,7 +130,7 @@ func (f *tcpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *tcpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer) gopacket.TransportLayer {
+func (f *tcpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
 	// Prepare for next call, this makes tcpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -166,7 +166,7 @@ func (f *tcpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer)
 	return tcp
 }
 
-func (f *tcpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.TransportLayer, payload []byte) {
+func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.Layer, payload []byte) {
 	f.sentPackets += 1
 	tcp := transportLayer.(*layers.TCP)
 	tcp.SetInternalPortsForTesting()
@@ -175,7 +175,7 @@ func (f *tcpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLay
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *tcpStreamFactory) postReceive(packet gopacket.Packet) {
+func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 	if packet.NetworkLayer() == nil || packet.TransportLayer() == nil ||
 		packet.TransportLayer().LayerType() != layers.LayerTypeTCP {

@@ -42,7 +42,15 @@ type Options struct {
 	// raw - int64 nanos since epoch
 	// <FORMAT> - human readable timestamp according to <FORMAT>
 	Timestamp string // Formatting of timestamp in result output.
-	IPv6      bool   // run in ipv6 mode
+
+	IPv6 bool // run in ipv6 mode
+
+	// Record route. Includes the RECORD_ROUTE option in each packet sent and displays the
+	// route buffer of returned packets.
+	// Note that the IP header is only large enough for nine such routes. Many hosts ignore or discard this option.
+	// Also note that using hping you are able to use record route even if target host filter ICMP.
+	// Record route is an IP option, not an ICMP option, so you can use record route option even in TCP and UDP mode.
+	Rroute bool
 
 	// RAW IP mode, in this mode it will send IP header with data appended with
 	// --signature and/or --file, see also --ipproto that allows you to set the ip protocol field.
@@ -93,6 +101,12 @@ type Options struct {
 	// destination port will be increased for each reply received.
 	// If double '+' precedes dest port number (i.e. ++1024), destination port will be increased for each packet sent.
 	DestPort string // Set destination port
+
+	// Icmp Related Options
+	IcmpType   int //Set icmp type, default is ICMP echo request (implies -icmp).
+	IcmpCode   int //Set icmp code, default is 0 (implies --icmp).
+	Icmpv6Type int //Set icmp type, default is ICMPv6 echo request (implies -ipv6 -icmp).
+	Icmpv6Code int //Set icmp code, default is 0 (implies -ipv6 -icmp).
 }
 
 // TODO: display all parsed options

@@ -13,8 +13,32 @@ import (
 	"time"
 )
 
+// udpStream
+type udpStream struct {
+	key                              key                   // This is supposed to be client 2 server key, egress in our case.
+	bytesEgress, bytesIngress, bytes int64                 // Total bytes seen on this stream.
+	ciEgress, ciIngress              *gopacket.CaptureInfo // To store the CaptureInfo seen on first packet of each direction
+	lastPacketSeen                   time.Time             // last time we saw a packet from either stream.
+	done                             bool                  // if true, we've seen the last packet we're going to for this stream.
+}
+
+// maybeFinish print out stats.
+// TODO: do something more meaningful.
+func (s *udpStream) maybeFinish() {
+	switch {
+	case s.ciEgress == nil:
+		log.Fatalf("Egress missing: [%v]", s)
+	case s.ciIngress == nil:
+		log.V(5).Infof("Ingress missing: [%v]", s)
+	case !s.done:
+		log.V(5).Infof("still waiting on stream: [%v] ", s)
+	default:
+		log.V(5).Infof("[%v] FINISHED, bytes: %d tx, %d rx", s.key, s.bytesEgress, s.bytesIngress)
+	}
+}
+
 // udpStreamFactory implements reassembly.StreamFactory
-// It also implement streamTransportLayer interface
+// It also implement streamProtoLayer interface
 type udpStreamFactory struct {
 	ctx     context.Context
 	streams map[key]*udpStream
@@ -85,7 +109,7 @@ func (f *udpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *udpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer) gopacket.TransportLayer {
+func (f *udpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
 	// Prepare for next call, this makes udpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -120,7 +144,7 @@ func (f *udpStreamFactory) prepareTransportLayer(netLayer gopacket.NetworkLayer)
 	return udp
 }
 
-func (f *udpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.TransportLayer, payload []byte) {
+func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
@@ -130,7 +154,7 @@ func (f *udpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLay
 	// Need the workaroud "udp.SetInternalPortsForTesting()" to get correct transport flow key
 	udp := transportLayer.(*layers.UDP)
 	udp.SetInternalPortsForTesting()
-	udpFlow := transportLayer.TransportFlow()
+	udpFlow := udp.TransportFlow()
 
 	k := key{netFlow, udpFlow}
 	if f.streams[k] != nil {
@@ -153,7 +177,7 @@ func (f *udpStreamFactory) postSend(netLayer gopacket.NetworkLayer, transportLay
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *udpStreamFactory) postReceive(packet gopacket.Packet) {
+func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 
 	// TODO: handle icmp reply for the packet.
@@ -231,28 +255,4 @@ func (f *udpStreamFactory) showStats() {
 		time.Duration(f.rttMin)*time.Nanosecond,
 		time.Duration(f.rttAvg)*time.Nanosecond,
 		time.Duration(f.rttMax)*time.Nanosecond)
-}
-
-// udpStream
-type udpStream struct {
-	key                              key                   // This is supposed to be client 2 server key, egress in our case.
-	bytesEgress, bytesIngress, bytes int64                 // Total bytes seen on this stream.
-	ciEgress, ciIngress              *gopacket.CaptureInfo // To store the CaptureInfo seen on first packet of each direction
-	lastPacketSeen                   time.Time             // last time we saw a packet from either stream.
-	done                             bool                  // if true, we've seen the last packet we're going to for this stream.
-}
-
-// maybeFinish print out stats.
-// TODO: do something more meaningful.
-func (s *udpStream) maybeFinish() {
-	switch {
-	case s.ciEgress == nil:
-		log.Fatalf("Egress missing: [%v]", s)
-	case s.ciIngress == nil:
-		log.V(5).Infof("Ingress missing: [%v]", s)
-	case !s.done:
-		log.V(5).Infof("still waiting on stream: [%v] ", s)
-	default:
-		log.V(5).Infof("[%v] FINISHED, bytes: %d tx, %d rx", s.key, s.bytesEgress, s.bytesIngress)
-	}
 }
