@@ -15,7 +15,7 @@ import (
 )
 
 // tcpStreamFactory implements reassembly.StreamFactory
-// It also implement streamProtoLayer interface
+// It also implement streamProtocolLayer interface
 type tcpStreamFactory struct {
 	ctx       context.Context
 	streams   map[key]*tcpStream

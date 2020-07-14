@@ -8,14 +8,30 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/jipanyang/hpinggo/options"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 )
 
-// udpStream
-type udpStream struct {
-	key                              key                   // This is supposed to be client 2 server key, egress in our case.
+// for tracking icmp request and reply
+// ICMPv4TypeEchoRequest
+// ICMPv4TypeTimestampRequest
+// ICMPv4TypeInfoRequest
+// ICMPv4TypeAddressMaskRequest
+// Not supporting other ICMP type like ICMPv4TypeDestinationUnreachable/ICMPv4TypeRedirect
+type icmpKey struct {
+	net gopacket.Flow
+	id  uint16
+	seq uint16
+}
+
+// String prints out the key in a human-readable fashion.
+func (k icmpKey) String() string {
+	return fmt.Sprintf("%v:%v:%v", k.net, k.id, k.seq)
+}
+
+// icmpStream
+type icmpStream struct {
+	key                              icmpKey               // This is supposed to be client 2 server key, egress in our case.
 	bytesEgress, bytesIngress, bytes int64                 // Total bytes seen on this stream.
 	ciEgress, ciIngress              *gopacket.CaptureInfo // To store the CaptureInfo seen on first packet of each direction
 	lastPacketSeen                   time.Time             // last time we saw a packet from either stream.
@@ -24,7 +40,7 @@ type udpStream struct {
 
 // maybeFinish print out stats.
 // TODO: do something more meaningful.
-func (s *udpStream) maybeFinish() {
+func (s *icmpStream) maybeFinish() {
 	switch {
 	case s.ciEgress == nil:
 		log.Fatalf("Egress missing: [%v]", s)
@@ -37,15 +53,14 @@ func (s *udpStream) maybeFinish() {
 	}
 }
 
-// udpStreamFactory implements reassembly.StreamFactory
+// icmpStreamFactory implements reassembly.StreamFactory
 // It also implement streamProtocolLayer interface
-type udpStreamFactory struct {
+type icmpStreamFactory struct {
 	ctx     context.Context
-	streams map[key]*udpStream
+	streams map[icmpKey]*icmpStream
 
 	localEnpoint gopacket.Endpoint
-	// the RWMutex is for protecting recvCount (for now) which may be updated in waitPackets
-	// and read in sendPackets
+	// TODO: evaluate usage of this mutex
 	mu sync.RWMutex
 	// Number of packets sent
 	sentPackets int64
@@ -55,21 +70,16 @@ type udpStreamFactory struct {
 
 	// options specified at user command line
 	cmdOpts options.Options
-	// convenient variables derived from options
-	baseDestPort     uint16
-	incDestPort      bool
-	forceIncDestPort bool
 
-	// The dynamic port number which may be derived in real time
-	dstPort uint16
-	srcPort uint16
+	id  uint16
+	seq uint16
 }
 
-// Create a new stream factory for UDP transport layer
-func newUdpStreamFactory(ctx context.Context, opt options.Options) *udpStreamFactory {
-	f := &udpStreamFactory{
+// Create a new stream factory for ICMP transport layer
+func newIcmpStreamFactory(ctx context.Context, opt options.Options) *icmpStreamFactory {
+	f := &icmpStreamFactory{
 		ctx:       ctx,
-		streams:   make(map[key]*udpStream),
+		streams:   make(map[icmpKey]*icmpStream),
 		recvCount: 0,
 		cmdOpts:   opt,
 	}
@@ -77,86 +87,59 @@ func newUdpStreamFactory(ctx context.Context, opt options.Options) *udpStreamFac
 	// Make the option setting available more conveniently
 	f.parseOptions()
 	// Set the starting point for dest and srouce ports
-	f.dstPort = f.baseDestPort
-	f.srcPort = uint16(opt.BaseSourcePort)
+	f.id = uint16(os.Getppid())
+	f.seq = 0
 
 	return f
 }
 
-func (f *udpStreamFactory) delete(s *udpStream) {
+func (f *icmpStreamFactory) delete(s *icmpStream) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	delete(f.streams, s.key) // remove it from our map.
 }
 
-func (f *udpStreamFactory) parseOptions() {
-	destPortStr := f.cmdOpts.DestPort
+func (f *icmpStreamFactory) parseOptions() {
 
-	if destPortStr[:1] == "+" {
-		f.incDestPort = true
-		destPortStr = destPortStr[1:]
-	}
-	if destPortStr[:1] == "+" {
-		f.forceIncDestPort = true
-		destPortStr = destPortStr[1:]
-	}
-
-	port, err := strconv.Atoi(destPortStr)
-	if err != nil {
-		log.Exitf("Invalid dest port: %v, %v\n", f.cmdOpts.DestPort, err)
-	}
-	f.baseDestPort = uint16(port)
 }
 
-func (f *udpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
-	// Prepare for next call, this makes udpStreamFactory stateful
-	if f.forceIncDestPort {
-		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
-	} else if f.incDestPort {
-		// recvCount may be updated in another routine, protect it with read lock
-		f.mu.RLock()
-		f.dstPort = f.baseDestPort + uint16(f.recvCount)
-		f.mu.RUnlock()
-	}
-
-	// Update source port number unless asked to stay const
-	if !f.cmdOpts.KeepConstSourcePort {
-		f.srcPort = uint16(f.cmdOpts.BaseSourcePort) + uint16(f.sentPackets)
-	}
+// gopacket classify icmpv4/icmpv6 as LayerClassIPControl
+func (f *icmpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
+	f.seq++
 
 	// TODO: populating the whole udp layer every time, improve it?
-	udp := &layers.UDP{
-		SrcPort: layers.UDPPort(f.srcPort),
-		DstPort: layers.UDPPort(f.dstPort),
+	icmp := &layers.ICMPv4{
+		TypeCode: layers.CreateICMPv4TypeCode(uint8(f.cmdOpts.IcmpType), uint8(f.cmdOpts.IcmpCode)),
+		Id:       f.id,
+		Seq:      f.seq,
 	}
-	udp.SetNetworkLayerForChecksum(netLayer)
+	// icmp.SetNetworkLayerForChecksum(netLayer)
 
 	switch v := netLayer.(type) {
 	case *layers.IPv4:
-		v.Protocol = layers.IPProtocolUDP
-	case *layers.IPv6:
-		v.NextHeader = layers.IPProtocolUDP
+		v.Protocol = layers.IPProtocolICMPv4
+	// case *layers.IPv6:
+	// 	v.NextHeader = layers.IPProtocolICMPv6
 	default:
 		panic("Unsupported network layer value")
 	}
 
-	return udp
+	return icmp
 }
 
-func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.Layer, payload []byte) {
+func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayer gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
 
 	netFlow := netLayer.NetworkFlow()
 
-	// Need the workaroud "udp.SetInternalPortsForTesting()" to get correct transport flow key
-	udp := transportLayer.(*layers.UDP)
-	udp.SetInternalPortsForTesting()
-	udpFlow := udp.TransportFlow()
+	icmp := icmpLayer.(*layers.ICMPv4)
+	// icmpType := icmp.TypeCode.Type()
+	// icmpCode := icmp.TypeCode.Code()
 
-	k := key{netFlow, udpFlow}
+	k := icmpKey{netFlow, icmp.Id, icmp.Seq}
 	if f.streams[k] != nil {
 		log.Infof("[%v] found existing stream", k)
 		f.streams[k].lastPacketSeen = time.Now()
@@ -166,33 +149,32 @@ func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 	// Fake CaptureInfo since we don't capture on egress
 	ci := gopacket.CaptureInfo{
 		Timestamp:     time.Now(),
-		CaptureLength: (len(payload)) + 8, // is 8 the header length?
+		CaptureLength: (len(payload)) + 8, // what is the length of icmp/ip/ether headers?
 		Length:        (len(payload)) + 8,
 	}
-	s := &udpStream{key: k, ciEgress: &ci, lastPacketSeen: ci.Timestamp}
+	s := &icmpStream{key: k, ciEgress: &ci, lastPacketSeen: ci.Timestamp}
 	f.streams[k] = s
 
-	log.V(5).Infof("[%v] created UDP session", k)
+	log.V(5).Infof("[%v] created ICMP session", k)
 
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
+func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 
-	// TODO: handle icmp reply for the packet.
-	if packet.NetworkLayer() == nil || packet.TransportLayer() == nil ||
-		packet.TransportLayer().LayerType() != layers.LayerTypeUDP {
+	if packet.NetworkLayer() == nil {
 		log.Errorf("Unusable packet: %v", packet)
 		return
 	}
-	kIngress := key{packet.NetworkLayer().NetworkFlow(), packet.TransportLayer().TransportFlow()}
-	if f.streams[kIngress] != nil {
-		// There was bidirection flows for this key.
-		// TODO: warning depending on test caases.
-		log.Infof("[%v] found existing stream", kIngress)
+	icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if !ok {
+		log.Errorf("Unusable packet: %v", packet)
+		return
 	}
-	kEgress := key{kIngress.net.Reverse(), kIngress.transport.Reverse()}
+	netflow := packet.NetworkLayer().NetworkFlow()
+
+	kEgress := icmpKey{netflow.Reverse(), icmp.Id, icmp.Seq}
 	// Found ingress flow for the corresponding egress flow.
 	s := f.streams[kEgress]
 	if s != nil {
@@ -213,13 +195,13 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 	}
 }
 
-func (f *udpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
+func (f *icmpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
 	f.localEnpoint = endpoint
 }
 
 // collectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
-func (f *udpStreamFactory) collectOldStreams(timeout time.Duration) {
+func (f *icmpStreamFactory) collectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 
 	for k, s := range f.streams {
@@ -231,7 +213,7 @@ func (f *udpStreamFactory) collectOldStreams(timeout time.Duration) {
 	}
 }
 
-func (f *udpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
+func (f *icmpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.recvCount += 1
@@ -247,7 +229,7 @@ func (f *udpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo
 	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
-func (f *udpStreamFactory) showStats() {
+func (f *icmpStreamFactory) showStats() {
 	fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
 	fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)

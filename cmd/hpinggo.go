@@ -97,6 +97,7 @@ func init() {
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
 
 	flag.BoolVar(&opt.Udp, "udp", false, "When set, stream in UDP mode")
+	flag.BoolVar(&opt.Icmp, "icmp", false, "When set, stream in ICMP mode")
 
 	flag.IntVar(&opt.Count, "count", DEFAULT_COUNT, "Stop after sending (and receiving) count response packets (-1 is infinite).")
 	flag.IntVar(&opt.BaseSourcePort, "baseport", DEFAULT_INITSPORT, "Base source port number, and increase this number for each packet sent. (-1 is random port number).")

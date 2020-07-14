@@ -24,11 +24,11 @@ const (
 	timeout time.Duration = time.Second * 5
 )
 
-// Interface for protocal layer stream processing.
+// Interface for protocol layer stream processing.
 // Assuming the protocol runs above IP layer immediately,
 // Could be TransportLayer protocols lik TCP/UDP or control protocols like ICMPv4/ICMPv6
-type streamProtoLayer interface {
-	// Prepare protocal layer before it could be serialized to wire format
+type streamProtocolLayer interface {
+	// Prepare protocol layer before it could be serialized to wire format
 	prepareProtocalLayer(gopacket.NetworkLayer) gopacket.Layer
 	// Post processing after the packet is sent.
 	onSend(gopacket.NetworkLayer, gopacket.Layer, []byte)
@@ -105,7 +105,7 @@ type packetStreamMgmr struct {
 	packetOpts gopacket.SerializeOptions
 	buf        gopacket.SerializeBuffer
 
-	streamFactory streamProtoLayer
+	streamFactory streamProtocolLayer
 
 	// options specified at user command line
 	cmdOpts options.Options
@@ -124,7 +124,9 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 		cmdOpts: opt,
 	}
 
-	if opt.Udp {
+	if opt.Icmp {
+		m.streamFactory = newIcmpStreamFactory(ctx, opt)
+	} else if opt.Udp {
 		m.streamFactory = newUdpStreamFactory(ctx, opt)
 	} else {
 		m.streamFactory = newTcpStreamFactory(ctx, opt)
@@ -212,6 +214,8 @@ func (m *packetStreamMgmr) open_pcap() {
 	var bpffilter string
 	if m.cmdOpts.Udp {
 		bpffilter = fmt.Sprintf("udp or icmp and inbound")
+	} else if m.cmdOpts.Icmp {
+		bpffilter = fmt.Sprintf("icmp and inbound")
 	} else {
 		bpffilter = fmt.Sprintf("tcp or icmp and inbound")
 	}
