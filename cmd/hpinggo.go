@@ -178,7 +178,7 @@ func main() {
 	fd := -1
 	if opt.RawSocket {
 		fd = open_sockraw()
-		log.Infof("Opened raw socket: %v\n", fd)
+		log.V(1).Infof("Opened raw socket: %v\n", fd)
 	}
 
 	defer util.Run()()
@@ -250,7 +250,7 @@ func main() {
 }
 
 func displayOptions(ctx context.Context, opt options.Options) error {
-	log.Infof("options: %v", opt)
+	log.V(1).Infof("options: %v", opt)
 	return nil
 }
 

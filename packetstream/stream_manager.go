@@ -52,7 +52,7 @@ type key struct {
 
 // String prints out the key in a human-readable fashion.
 func (k key) String() string {
-	return fmt.Sprintf("%v:%v", k.net, k.transport)
+	return fmt.Sprintf("%v :: %v", k.net, k.transport)
 }
 
 // TODO: more comprehensive sanity check
@@ -162,7 +162,7 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 		if err != nil {
 			log.Exitf("Interface: %v %v\n", iface, err)
 		} else {
-			log.Infof("Interface: %v, Addresses: %v\n", iface, ifAddrs)
+			log.V(1).Infof("Interface: %v, Addresses: %v\n", iface, ifAddrs)
 		}
 		m.iface = iface
 		// TODO: IsGlobalUnicast() vs IsLinkLocalUnicast()?
@@ -177,7 +177,7 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 				break
 			}
 		}
-		log.Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
+		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
 			opt.RandDest, m.iface.Name, m.src, m.cmdOpts)
 	}
 	// m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
@@ -205,7 +205,7 @@ func (m *packetStreamMgmr) open_pcap() {
 	if err != nil {
 		log.Exitf("error creating a pcap handle: %v\n", err)
 	}
-	log.Infof("Opened pcap handle %+v", handle)
+	log.V(1).Infof("Opened pcap handle %+v", handle)
 	m.handle = handle
 
 	// TODO: support other protocals
@@ -220,7 +220,7 @@ func (m *packetStreamMgmr) open_pcap() {
 		bpffilter = fmt.Sprintf("tcp or icmp and inbound")
 	}
 
-	log.Infof("Using BPF filter %q\n", bpffilter)
+	log.V(1).Infof("Using BPF filter %q\n", bpffilter)
 	if err := m.handle.SetBPFFilter(bpffilter); err != nil {
 		log.Exitf("SetBPFFilter: %v\n", err)
 	}
@@ -279,7 +279,7 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 			m.streamFactory.onReceive(packet)
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
-			log.Infof("---- FLUSHING ----")
+			log.V(1).Infof("---- FLUSHING ----")
 			// m.assembler.FlushCloseOlderThan(time.Now().Add(-timeout))
 			m.streamFactory.collectOldStreams(timeout)
 
@@ -340,7 +340,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 
 		sentPackets += 1
 		if sentPackets == m.cmdOpts.Count {
-			log.Infof("Sent %v packets, exiting in 1 second", sentPackets)
+			log.V(1).Infof("Sent %v packets, exiting in 1 second", sentPackets)
 			time.Sleep(1 * time.Second)
 			return nil
 		}
@@ -381,14 +381,14 @@ func (m *packetStreamMgmr) StartStream() error {
 	stop := make(chan struct{})
 	go m.waitPackets(stop)
 	defer close(stop)
-	log.Infof("Start Streaming, time: %v", time.Now())
+	log.V(1).Infof("Start Streaming, time: %v", time.Now())
 	if m.cmdOpts.IPv6 {
 		m.sendPackets(&ipv6)
 	} else {
 		m.sendPackets(&ipv4)
 	}
 
-	log.Infof("Return from Stream, socketFd: %v, time: %v", m.socketFd, time.Now())
+	log.V(1).Infof("Return from Stream, socketFd: %v, time: %v", m.socketFd, time.Now())
 	return nil
 }
 

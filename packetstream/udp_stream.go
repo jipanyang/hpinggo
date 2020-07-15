@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+func LogUDPReply(packet gopacket.Packet, key string) {
+	fmt.Fprintf(os.Stderr, "[%v] got UDP reply\n", key)
+	log.V(2).Infof("%v", packet)
+}
+
 // udpStream
 type udpStream struct {
 	key                              key                   // This is supposed to be client 2 server key, egress in our case.
@@ -84,9 +89,6 @@ func newUdpStreamFactory(ctx context.Context, opt options.Options) *udpStreamFac
 }
 
 func (f *udpStreamFactory) delete(s *udpStream) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	delete(f.streams, s.key) // remove it from our map.
 }
 
@@ -179,22 +181,74 @@ func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 // TODO: check sequence number of each packet sent or received.
 func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	// TODO: handle icmp reply for the packet.
-	if packet.NetworkLayer() == nil || packet.TransportLayer() == nil ||
-		packet.TransportLayer().LayerType() != layers.LayerTypeUDP {
+	if packet.NetworkLayer() == nil {
 		log.Errorf("Unusable packet: %v", packet)
 		return
 	}
-	kIngress := key{packet.NetworkLayer().NetworkFlow(), packet.TransportLayer().TransportFlow()}
-	if f.streams[kIngress] != nil {
-		// There was bidirection flows for this key.
-		// TODO: warning depending on test caases.
-		log.Infof("[%v] found existing stream", kIngress)
+	var s *udpStream = nil
+	// record the icmp reply for udp stream
+	if !f.cmdOpts.IPv6 {
+		icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+		if ok {
+			typeCode := icmp.TypeCode
+			if typeCode.Type() == layers.ICMPv4TypeDestinationUnreachable ||
+				typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
+				payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
+				if ok {
+					p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
+					if p.TransportLayer() != nil && p.TransportLayer().LayerType() == layers.LayerTypeUDP {
+						kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
+						s = f.streams[kEgress]
+						if s != nil {
+							LogICMPv4(typeCode, kEgress.String())
+						} else {
+							log.Infof(" %v timed out?", kEgress)
+						}
+					}
+				}
+			}
+			// This is an ICMP reply but no matching udp content found there.
+			if s == nil {
+				log.Errorf("Unusable packet: %v", packet)
+				return
+			}
+		}
+	} else {
+		// TODO: handle icmpv6
+		icmp, ok := packet.Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
+		if ok {
+			_ = icmp
+			return
+		}
 	}
-	kEgress := key{kIngress.net.Reverse(), kIngress.transport.Reverse()}
+	if s == nil {
+		if packet.TransportLayer() == nil ||
+			packet.TransportLayer().LayerType() != layers.LayerTypeUDP {
+			log.Errorf("Unusable packet: %v", packet)
+			return
+		}
+
+		kIngress := key{packet.NetworkLayer().NetworkFlow(), packet.TransportLayer().TransportFlow()}
+		if f.streams[kIngress] != nil {
+			// There was bidirection flows for this key.
+			// TODO: warning depending on test caases.
+			log.Infof("[%v] found existing stream", kIngress)
+		}
+		kEgress := key{kIngress.net.Reverse(), kIngress.transport.Reverse()}
+		s = f.streams[kEgress]
+		if s != nil {
+			LogUDPReply(packet, kEgress.String())
+		} else {
+			log.V(5).Infof("[%s] not found", kEgress)
+		}
+
+	}
+
 	// Found ingress flow for the corresponding egress flow.
-	s := f.streams[kEgress]
 	if s != nil {
 		log.V(5).Infof("[%v]: The opposite ingress packet arrived", s.key)
 		meta := packet.Metadata()
@@ -208,8 +262,6 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 		s.done = true
 		s.maybeFinish()
 		f.delete(s)
-	} else {
-		log.V(5).Infof("[%v] not found", kEgress)
 	}
 }
 
@@ -221,6 +273,8 @@ func (f *udpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
 // 'timeout'
 func (f *udpStreamFactory) collectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	for k, s := range f.streams {
 		if s.lastPacketSeen.Before(cutoff) {
@@ -232,8 +286,6 @@ func (f *udpStreamFactory) collectOldStreams(timeout time.Duration) {
 }
 
 func (f *udpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.recvCount += 1
 
 	delay := int64(ciIngress.Timestamp.Sub(ciEgress.Timestamp) / time.Nanosecond)

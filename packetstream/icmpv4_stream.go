@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string) {
+	fmt.Fprintf(os.Stderr, "[%v], %v\n", key, typeCode.String())
+}
+
 // for tracking icmp request and reply
 // ICMPv4TypeEchoRequest
 // ICMPv4TypeTimestampRequest
