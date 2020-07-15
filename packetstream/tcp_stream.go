@@ -90,7 +90,7 @@ func (f *tcpStreamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, 
 		isEgress = false
 	}
 	if !isEgress {
-		log.Infof("[%v] found as first packet of TCP session in ingress direction", k)
+		log.V(2).Infof("[%v] found as first packet of TCP session in ingress direction", k)
 		// TODO: update gopacket/reassembly so it is possible to ignore certain flows.
 		// return nil
 	}
@@ -197,6 +197,9 @@ func (f *tcpStreamFactory) collectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	f.assembler.FlushCloseOlderThan(cutoff)
 
+	// map iteration should be protected
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for k, s := range f.streams {
 		if s.lastPacketSeen.Before(cutoff) {
 			log.V(5).Infof("[%v] timing out old session", s.key)
@@ -207,8 +210,6 @@ func (f *tcpStreamFactory) collectOldStreams(timeout time.Duration) {
 }
 
 func (f *tcpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.recvCount += 1
 
 	delay := int64(ciIngress.Timestamp.Sub(ciEgress.Timestamp) / time.Nanosecond)
