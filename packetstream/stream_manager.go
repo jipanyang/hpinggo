@@ -280,7 +280,6 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
 			log.V(1).Infof("---- FLUSHING ----")
-			// m.assembler.FlushCloseOlderThan(time.Now().Add(-timeout))
 			m.streamFactory.collectOldStreams(timeout)
 
 		case <-stop:

@@ -74,8 +74,6 @@ func newTcpStreamFactory(ctx context.Context, opt options.Options) *tcpStreamFac
 // new TCP session which includes both incoming and outgoing flows.
 // TODO: Make use of AssemblerContext and tcp *layers.TCP
 func (f *tcpStreamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, ac reassembly.AssemblerContext) reassembly.Stream {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	// This is the first packet seen for the tcp session, should be in direction of client to server.
 	// In our case, egress flow
 	k := key{netFlow, tcpFlow}
@@ -105,9 +103,6 @@ func (f *tcpStreamFactory) New(netFlow, tcpFlow gopacket.Flow, tcp *layers.TCP, 
 }
 
 func (f *tcpStreamFactory) delete(s *tcpStream) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	delete(f.streams, s.key) // remove it from our map.
 }
 
@@ -170,6 +165,10 @@ func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 	f.sentPackets += 1
 	tcp := transportLayer.(*layers.TCP)
 	tcp.SetInternalPortsForTesting()
+
+	// Big lock for sned processing since we have no control over assembler internal processing.
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	// pass the info to assembler so ingress flow may match it
 	f.assembler.Assemble(netLayer.NetworkFlow(), tcp)
 }
@@ -177,7 +176,48 @@ func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 // TODO: check sequence number of each packet sent or received.
 func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
-	if packet.NetworkLayer() == nil || packet.TransportLayer() == nil ||
+
+	// Big lock for receive processing since we have no control over assembler internal processing.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if packet.NetworkLayer() == nil {
+		log.Errorf("Unusable packet: %v", packet)
+		return
+	}
+
+	// Check ICMPv4 first
+	icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+	if ok {
+		var s *tcpStream = nil
+		typeCode := icmp.TypeCode
+		if typeCode.Type() == layers.ICMPv4TypeDestinationUnreachable ||
+			typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
+			payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
+			if ok {
+				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
+				if p.TransportLayer() != nil && p.TransportLayer().LayerType() == layers.LayerTypeTCP {
+					kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
+					s = f.streams[kEgress]
+					if s != nil {
+						// TODO: update updateStreamRecvStats?
+						LogICMPv4(typeCode, kEgress.String(), packet)
+					} else {
+						log.Infof(" %v timed out?", kEgress)
+					}
+				}
+			}
+		}
+		// This is an ICMP reply but no matching tcp content found there.
+		if s == nil {
+			log.V(3).Infof("Unusable packet: %v", packet)
+		} else {
+			s.ReassemblyComplete(nil)
+		}
+		return
+	}
+
+	if packet.TransportLayer() == nil ||
 		packet.TransportLayer().LayerType() != layers.LayerTypeTCP {
 		log.Errorf("Unusable packet: %v", packet)
 		return
@@ -195,11 +235,12 @@ func (f *tcpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
 // 'timeout'
 func (f *tcpStreamFactory) collectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
-	f.assembler.FlushCloseOlderThan(cutoff)
-
 	// map iteration should be protected
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	f.assembler.FlushCloseOlderThan(cutoff)
+
 	for k, s := range f.streams {
 		if s.lastPacketSeen.Before(cutoff) {
 			log.V(5).Infof("[%v] timing out old session", s.key)

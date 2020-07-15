@@ -204,7 +204,7 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
 						s = f.streams[kEgress]
 						if s != nil {
-							LogICMPv4(typeCode, kEgress.String())
+							LogICMPv4(typeCode, kEgress.String(), packet)
 						} else {
 							log.Infof(" %v timed out?", kEgress)
 						}

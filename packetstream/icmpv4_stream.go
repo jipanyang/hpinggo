@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string) {
+func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, packet gopacket.Packet) {
 	fmt.Fprintf(os.Stderr, "[%v], %v\n", key, typeCode.String())
+	log.V(2).Infof("%v", packet)
 }
 
 // for tracking icmp request and reply
@@ -98,9 +99,6 @@ func newIcmpStreamFactory(ctx context.Context, opt options.Options) *icmpStreamF
 }
 
 func (f *icmpStreamFactory) delete(s *icmpStream) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	delete(f.streams, s.key) // remove it from our map.
 }
 
@@ -166,6 +164,8 @@ func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayer gop
 // TODO: check sequence number of each packet sent or received.
 func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	if packet.NetworkLayer() == nil {
 		log.Errorf("Unusable packet: %v", packet)
@@ -207,6 +207,8 @@ func (f *icmpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
 // 'timeout'
 func (f *icmpStreamFactory) collectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	for k, s := range f.streams {
 		if s.lastPacketSeen.Before(cutoff) {
@@ -218,8 +220,6 @@ func (f *icmpStreamFactory) collectOldStreams(timeout time.Duration) {
 }
 
 func (f *icmpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo, ciEgress *gopacket.CaptureInfo) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.recvCount += 1
 
 	delay := int64(ciIngress.Timestamp.Sub(ciEgress.Timestamp) / time.Nanosecond)
