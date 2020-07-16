@@ -13,19 +13,23 @@ import (
 	"time"
 )
 
-func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, packet gopacket.Packet) {
-	fmt.Fprintf(os.Stderr, "[%v], %v\n", key, typeCode.String())
+func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
+	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
+
+	fmt.Fprintf(os.Stderr, "[%v] %v  rtt=%v\n", key, typeCode.String(), delay)
 	log.V(2).Infof("%v", packet)
 }
 
 func LogTraceRoute(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
 	netflow := packet.NetworkLayer().NetworkFlow()
-	fmt.Fprintf(os.Stderr, "hop=%v [%v], %v\n", ttl, netflow, typeCode.String())
-
 	ipv4 := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 	name, _ := net.LookupAddr(ipv4.SrcIP.String())
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
-	fmt.Fprintf(os.Stderr, "hop=%v hoprtt=%v from %v\n", ttl, delay, name)
+
+	fmt.Fprintf(os.Stderr, "hop=%v %v rtt=%v %v%v->%v\n",
+		ttl, typeCode.String(), delay, netflow.Src(), name, netflow.Dst())
+
+	// fmt.Fprintf(os.Stderr, "hop=%v hoprtt=%v from %v\n", ttl, delay, name)
 	log.V(2).Infof("%v", packet)
 }
 
@@ -43,7 +47,7 @@ type icmpKey struct {
 
 // String prints out the key in a human-readable fashion.
 func (k icmpKey) String() string {
-	return fmt.Sprintf("%v:%v:%v", k.net, k.id, k.seq)
+	return fmt.Sprintf("%v  %+v:%+v", k.net, k.id, k.seq)
 }
 
 // icmpStream
@@ -90,6 +94,8 @@ type icmpStreamFactory struct {
 
 	id  uint16
 	seq uint16
+
+	srcTTL uint8 // TTL
 }
 
 // Create a new stream factory for ICMP transport layer
@@ -106,6 +112,17 @@ func newIcmpStreamFactory(ctx context.Context, opt options.Options) *icmpStreamF
 	// Set the starting point for dest and srouce ports
 	f.id = uint16(os.Getppid())
 	f.seq = 0
+
+	if opt.TTL > 0 {
+		f.srcTTL = uint8(opt.TTL)
+	} else if opt.TraceRoute {
+		f.srcTTL = 1
+	} else {
+		f.srcTTL = 64
+		if opt.IPv6 {
+			f.srcTTL = 255
+		}
+	}
 
 	return f
 }
@@ -133,6 +150,7 @@ func (f *icmpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer)
 	switch v := netLayer.(type) {
 	case *layers.IPv4:
 		v.Protocol = layers.IPProtocolICMPv4
+		v.TTL = f.srcTTL
 	// case *layers.IPv6:
 	// 	v.NextHeader = layers.IPProtocolICMPv6
 	default:
@@ -188,6 +206,7 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 		log.Errorf("Unusable packet: %v", packet)
 		return
 	}
+	typeCode := icmp.TypeCode
 	netflow := packet.NetworkLayer().NetworkFlow()
 
 	kEgress := icmpKey{netflow.Reverse(), icmp.Id, icmp.Seq}
@@ -203,11 +222,41 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 			s.lastPacketSeen = s.ciIngress.Timestamp
 		}
 		f.updateStreamRecvStats(s.ciIngress, s.ciEgress)
+		kIngress := icmpKey{netflow, icmp.Id, icmp.Seq}
+		LogICMPv4(icmp.TypeCode, kIngress.String(), s.ciEgress, packet)
+
 		s.done = true
 		s.maybeFinish()
 		f.delete(s)
 	} else {
-		log.V(5).Infof("[%v] not found", kEgress)
+		if f.cmdOpts.TraceRoute {
+			if typeCode.Type() == layers.ICMPv4TypeDestinationUnreachable ||
+				typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
+				payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
+				if ok {
+					// Parsing through content of icmp reply. Assuming all ok, otherwise crash
+					p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
+					icmpEgress, ok := p.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+					if ok {
+						netflow = p.NetworkLayer().NetworkFlow()
+						kEgress = icmpKey{netflow, icmpEgress.Id, icmpEgress.Seq}
+						s = f.streams[kEgress]
+						if s != nil {
+							if f.cmdOpts.TraceRoute {
+								LogTraceRoute(f.srcTTL, s.ciEgress, typeCode, packet)
+								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+								if !f.cmdOpts.TraceRouteKeepTTL {
+									f.srcTTL++
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if s == nil {
+			log.V(2).Infof("Unknown ICMP reply: %v", packet)
+		}
 	}
 }
 

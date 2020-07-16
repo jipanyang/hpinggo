@@ -225,7 +225,7 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 									f.srcTTL++
 								}
 							} else {
-								LogICMPv4(typeCode, kEgress.String(), packet)
+								LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
 
 						} else {

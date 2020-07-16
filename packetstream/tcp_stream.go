@@ -201,7 +201,7 @@ func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 					s = f.streams[kEgress]
 					if s != nil {
 						// TODO: update updateStreamRecvStats?
-						LogICMPv4(typeCode, kEgress.String(), packet)
+						LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 					} else {
 						log.Infof(" %v timed out?", kEgress)
 					}

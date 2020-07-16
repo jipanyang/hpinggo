@@ -52,7 +52,8 @@ type key struct {
 
 // String prints out the key in a human-readable fashion.
 func (k key) String() string {
-	return fmt.Sprintf("%v :: %v", k.net, k.transport)
+	// return fmt.Sprintf("%v :: %v", k.net, k.transport)
+	return fmt.Sprintf("%v:%v->%v:%v", k.net.Src(), k.transport.Src(), k.net.Dst(), k.transport.Dst())
 }
 
 // TODO: more comprehensive sanity check
