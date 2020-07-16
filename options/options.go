@@ -27,7 +27,17 @@ type Options struct {
 	// enables the random destination mode
 	RandDest   string
 	RandSource string // Enables the random source mode
-	Data       int    // data size
+	//Using this option you can set TTL (time to live) of outgoing packets,
+	// it's likely that you will use this with -traceroute or --bind options.
+	TTL int //time to live
+
+	// Common Options
+	Data int // payload data size
+
+	TraceRoute        bool // Run in trace route mode
+	TraceRouteKeepTTL bool // Keep the TTL fixed in traceroute mode, so you can monitor just one hop in the route.
+	//If this option is specified hping will exit once the first packet that isn't an ICMP time exceeded is received.
+	TraceRouteStop bool
 
 	Delimiter     string // Delimiter between path elements when converted to string.
 	DisplayPrefix string // Prefix for each line of result output.
@@ -71,19 +81,27 @@ type Options struct {
 	Scan string // Ports range to scan
 
 	// tcp options, https://en.wikipedia.org/wiki/Transmission_Control_Protocol
-	TcpTimestamp bool // Enable the TCP timestamp option, and try to guess the timestamp update frequency and the remote system uptime.
+	// Enable the TCP timestamp option, and try to guess the timestamp update frequency and the remote system uptime.
+	TcpTimestamp bool
 	// 	Flags (9 bits)
 	// Contains 9 1-bit flags (control bits) as follows:
 	// NS (1 bit): ECN-nonce - concealment protection[a]
-	// CWR (1 bit): Congestion window reduced (CWR) flag is set by the sending host to indicate that it received a TCP segment with the ECE flag set and had responded in congestion control mechanism.[b]
+	// CWR (1 bit): Congestion window reduced (CWR) flag is set by the sending host to indicate that
+	//              it received a TCP segment with the ECE flag set and had responded in congestion control mechanism.[b]
 	// ECE (1 bit): ECN-Echo has a dual role, depending on the value of the SYN flag. It indicates:
-	// If the SYN flag is set (1), that the TCP peer is ECN capable.
-	// If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11) in the IP header was received during normal transmission.[b] This serves as an indication of network congestion (or impending congestion) to the TCP sender.
+	//    If the SYN flag is set (1), that the TCP peer is ECN capable.
+	//    If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11)
+	//    in the IP header was received during normal transmission.[b] This serves as an indication of network congestion
+	//    (or impending congestion) to the TCP sender.
 	// URG (1 bit): Indicates that the Urgent pointer field is significant
-	// ACK (1 bit): Indicates that the Acknowledgment field is significant. All packets after the initial SYN packet sent by the client should have this flag set.
+	// ACK (1 bit): Indicates that the Acknowledgment field is significant.
+	//    All packets after the initial SYN packet sent by the client should have this flag set.
 	// PSH (1 bit): Push function. Asks to push the buffered data to the receiving application.
 	// RST (1 bit): Reset the connection
-	// SYN (1 bit): Synchronize sequence numbers. Only the first packet sent from each end should have this flag set. Some other flags and fields change meaning based on this flag, and some are only valid when it is set, and others when it is clear.
+	// SYN (1 bit): Synchronize sequence numbers.
+	//    Only the first packet sent from each end should have this flag set.
+	//    Some other flags and fields change meaning based on this flag, and
+	//    some are only valid when it is set, and others when it is clear.
 	// FIN (1 bit): Last packet from sender
 	TcpFin  bool // Set FIN tcp flag
 	TcpSyn  bool // Set SYN tcp flag
@@ -145,7 +163,7 @@ func (opt Options) String() string {
 	}
 	return fmt.Sprintf("Interval: %v, Interface: %v, IPv6: %v, TcpFlags: %v, "+
 		"BaseSourcePort: %v, KeepConstSourcePort: %v, DestPort: %v, Data: %v "+
-		"RandDest: %v, RandSource: %v",
+		"RandDest: %v, RandSource: %v, TTL: %v",
 		opt.Interval, opt.Interface, opt.IPv6, tcpFlags, opt.BaseSourcePort,
-		opt.KeepConstSourcePort, opt.DestPort, opt.Data, opt.RandDest, opt.RandSource)
+		opt.KeepConstSourcePort, opt.DestPort, opt.Data, opt.RandDest, opt.RandSource, opt.TTL)
 }

@@ -68,6 +68,7 @@ type udpStreamFactory struct {
 	// The dynamic port number which may be derived in real time
 	dstPort uint16
 	srcPort uint16
+	srcTTL  uint8 // TTL
 }
 
 // Create a new stream factory for UDP transport layer
@@ -84,6 +85,17 @@ func newUdpStreamFactory(ctx context.Context, opt options.Options) *udpStreamFac
 	// Set the starting point for dest and srouce ports
 	f.dstPort = f.baseDestPort
 	f.srcPort = uint16(opt.BaseSourcePort)
+
+	if opt.TTL > 0 {
+		f.srcTTL = uint8(opt.TTL)
+	} else if opt.TraceRoute {
+		f.srcTTL = 1
+	} else {
+		f.srcTTL = 64
+		if opt.IPv6 {
+			f.srcTTL = 255
+		}
+	}
 
 	return f
 }
@@ -137,8 +149,10 @@ func (f *udpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) 
 	switch v := netLayer.(type) {
 	case *layers.IPv4:
 		v.Protocol = layers.IPProtocolUDP
+		v.TTL = f.srcTTL
 	case *layers.IPv6:
 		v.NextHeader = layers.IPProtocolUDP
+		v.HopLimit = f.srcTTL
 	default:
 		panic("Unsupported network layer value")
 	}
@@ -204,7 +218,16 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
 						s = f.streams[kEgress]
 						if s != nil {
-							LogICMPv4(typeCode, kEgress.String(), packet)
+							if f.cmdOpts.TraceRoute {
+								LogTraceRoute(f.srcTTL, s.ciEgress, typeCode, packet)
+								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+								if !f.cmdOpts.TraceRouteKeepTTL {
+									f.srcTTL++
+								}
+							} else {
+								LogICMPv4(typeCode, kEgress.String(), packet)
+							}
+
 						} else {
 							log.Infof(" %v timed out?", kEgress)
 						}

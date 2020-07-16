@@ -18,7 +18,7 @@ limitations under the License.
 // sudo hpinggo -target www.google.com  -scan 'known,!80' -i 1ms -S
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -I wlp3s0  -i 1ms -S -logtostderr
 // sudo hpinggo -target www.yahoo.com  -scan '0-70,80,443' -ipv6  -i 1ms -S
-
+//
 // stream mode usage
 //
 // No payload and increment destination port unconditionally(-p ++79):
@@ -26,9 +26,14 @@ limitations under the License.
 //
 // With payload (-d) and increment destination port upon response (-p +80):
 // sudo hpinggo -target www.google.com  -s 5432 -p +80 -S -c 2 -d 512
-
+//
 // for testing with github.com/google/gopacket/reassembly
 // sudo /usr/local/go/bin/go run -a cmd/hpinggo.go -target  192.168.0.1 -s 2000 -p +20005 -S -c 3
+//
+// Trace route usage
+// sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute
+// sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl
+
 package main
 
 import (
@@ -59,7 +64,7 @@ const (
 	DEFAULT_INITSPORT        = -1  /* default initial source port: -1 means random */
 	DEFAULT_COUNT            = -1  /* default packets count: -1 means forever */
 	DEFAULT_DATA_SIZE        = 0   /* default packets data size for applicaction payload*/
-	DEFAULT_TTL              = 64  /* default ip->ttl value */
+	DEFAULT_TTL              = -1  /* Application decides TTL or hoplimit*/
 	DEFAULT_SRCWINSIZE       = 512 /* default tcp windows size */
 	DEFAULT_VIRTUAL_MTU      = 16  /* tiny fragments */
 	DEFAULT_ICMP_TYPE        = 8   /* echo request */
@@ -90,11 +95,14 @@ func init() {
 	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.StringVar(&opt.RandDest, "rand-dest", "", "Enables the random destination mode, x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.StringVar(&opt.RandSource, "rand-source", "", "Enables the random source mode,  x.x.x.x, 192,168.x.x, 128.x.x.255")
-	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "SSet packet body size")
+	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "Set packet body size")
+	flag.IntVar(&opt.TTL, "ttl", DEFAULT_TTL, "Set TTL (time to live) of outgoing packets")
 	flag.BoolVar(&opt.IPv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")
 	flag.BoolVar(&opt.RawSocket, "raw_socket", true, "Use raw socket for sending packets")
+	flag.BoolVar(&opt.TraceRoute, "traceroute", false, "Traceroute mode")
+	flag.BoolVar(&opt.TraceRouteKeepTTL, "keepttl", false, "Keep the TTL fixed in traceroute mode Traceroute mode")
 
 	flag.BoolVar(&opt.Udp, "udp", false, "When set, stream in UDP mode")
 	flag.BoolVar(&opt.Icmp, "icmp", false, "When set, stream in ICMP mode")

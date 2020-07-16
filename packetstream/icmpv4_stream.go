@@ -7,6 +7,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/jipanyang/hpinggo/options"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -14,6 +15,17 @@ import (
 
 func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, packet gopacket.Packet) {
 	fmt.Fprintf(os.Stderr, "[%v], %v\n", key, typeCode.String())
+	log.V(2).Infof("%v", packet)
+}
+
+func LogTraceRoute(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
+	netflow := packet.NetworkLayer().NetworkFlow()
+	fmt.Fprintf(os.Stderr, "hop=%v [%v], %v\n", ttl, netflow, typeCode.String())
+
+	ipv4 := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+	name, _ := net.LookupAddr(ipv4.SrcIP.String())
+	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
+	fmt.Fprintf(os.Stderr, "hop=%v hoprtt=%v from %v\n", ttl, delay, name)
 	log.V(2).Infof("%v", packet)
 }
 
