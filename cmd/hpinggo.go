@@ -28,7 +28,7 @@ limitations under the License.
 // sudo hpinggo -target www.google.com  -s 5432 -p +80 -S -c 2 -d 512
 //
 // for testing with github.com/google/gopacket/reassembly
-// sudo /usr/local/go/bin/go run -a cmd/hpinggo.go -target  192.168.0.1 -s 2000 -p +20005 -S -c 3
+// sudo /usr/local/go/bin/go run cmd/hpinggo.go -target  192.168.0.1 -s 2000 -p +20005 -S -c 3
 //
 // Trace route usage example
 //
@@ -37,7 +37,7 @@ limitations under the License.
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl
 //
 // ICMP
-// sudo /usr/local/go/bin/go run -a cmd/hpinggo.go -target www.google.com -d 128 -icmp -c 20 -traceroute
+// sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.google.com -d 128 -icmp -c 20 -traceroute
 
 package main
 

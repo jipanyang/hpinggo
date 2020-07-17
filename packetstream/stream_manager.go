@@ -74,8 +74,8 @@ func randIpSanityCheck(ipStr string, isIPv6 bool) bool {
 
 // Get one random IPv4 IP based on the string pattern
 // Ex.  x.x.x.x 192.168.1.x,  192.x.1.1
-func getRandomIPv4(randDest string) net.IP {
-	octets := strings.Split(randDest, ".")
+func getRandomIPv4(randIP string) net.IP {
+	octets := strings.Split(randIP, ".")
 	ipStr := ""
 	for _, octet := range octets {
 		if octet == "x" {
@@ -85,6 +85,29 @@ func getRandomIPv4(randDest string) net.IP {
 		}
 	}
 	last := len(ipStr) - 1
+	ipStr = ipStr[:last]
+	return net.ParseIP(ipStr)
+}
+
+func getRandomIPv6(randIP string) net.IP {
+	halves := strings.Split(randIP, "::")
+	ipStr := ""
+	for _, half := range halves {
+		hextets := strings.Split(half, ":")
+		for _, hextet := range hextets {
+			if hextet == "x" {
+				ipStr += fmt.Sprintf("%x", rand.Intn(256)) + ":"
+			} else if hextet == "xx" {
+				ipStr += fmt.Sprintf("%x", rand.Intn(65536)) + ":"
+			} else {
+				ipStr += hextet + ":"
+			}
+		}
+		last := len(ipStr) - 1
+		ipStr = ipStr[:last]
+		ipStr += "::"
+	}
+	last := len(ipStr) - 2
 	ipStr = ipStr[:last]
 	return net.ParseIP(ipStr)
 }
@@ -144,8 +167,8 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 		if err != nil {
 			return nil, err
 		}
-		log.Infof("Streaming to destination %v with interface %v, gateway %v, src %v\n cmdOpts %+v",
-			dstIp, iface.Name, gw, src, m.cmdOpts)
+		log.Infof("Streaming to destination %v with interface %v, gateway %v, src %v\n",
+			dstIp, iface.Name, gw, src)
 		m.gw, m.src, m.iface = gw, src, iface
 	} else {
 		if !randIpSanityCheck(opt.RandDest, opt.IPv6) {
@@ -181,7 +204,6 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
 			opt.RandDest, m.iface.Name, m.src, m.cmdOpts)
 	}
-	// m.streamFactory.localEnpoint = layers.NewIPEndpoint(src)
 	m.streamFactory.setLocalEnpoint(layers.NewIPEndpoint(m.src))
 	m.open_pcap()
 
@@ -328,6 +350,18 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 			}
 
 		case *layers.IPv6:
+			if m.cmdOpts.RandDest != "" {
+				v.DstIP = getRandomIPv6(m.cmdOpts.RandDest)
+				if v.DstIP == nil {
+					panic("Failed to get random IP")
+				}
+			}
+			if m.cmdOpts.RandSource != "" {
+				v.SrcIP = getRandomIPv6(m.cmdOpts.RandSource)
+				if v.SrcIP == nil {
+					panic("Failed to get random IP")
+				}
+			}
 			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t, err)
 			} else {
