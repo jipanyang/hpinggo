@@ -125,7 +125,7 @@ func (f *tcpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *tcpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
+func (f *tcpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	// Prepare for next call, this makes tcpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -158,11 +158,14 @@ func (f *tcpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) 
 	tcp.SetNetworkLayerForChecksum(netLayer)
 	tcp.DstPort = layers.TCPPort(f.dstPort)
 	tcp.SrcPort = layers.TCPPort(f.srcPort)
-	return tcp
+	return []gopacket.Layer{tcp}
 }
 
-func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.Layer, payload []byte) {
+func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
 	f.sentPackets += 1
+
+	// TODO: check length of slice
+	transportLayer := transportLayers[0]
 	tcp := transportLayer.(*layers.TCP)
 	tcp.SetInternalPortsForTesting()
 

@@ -136,7 +136,7 @@ func (f *icmpStreamFactory) parseOptions() {
 }
 
 // gopacket classify icmpv4/icmpv6 as LayerClassIPControl
-func (f *icmpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
+func (f *icmpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	f.seq++
 
 	// TODO: populating the whole udp layer every time, improve it?
@@ -157,16 +157,18 @@ func (f *icmpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer)
 		panic("Unsupported network layer value")
 	}
 
-	return icmp
+	return []gopacket.Layer{icmp}
 }
 
-func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayer gopacket.Layer, payload []byte) {
+func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
 
 	netFlow := netLayer.NetworkFlow()
 
+	// TODO: check length of icmpLayers
+	icmpLayer := icmpLayers[0]
 	icmp := icmpLayer.(*layers.ICMPv4)
 	// icmpType := icmp.TypeCode.Type()
 	// icmpCode := icmp.TypeCode.Code()

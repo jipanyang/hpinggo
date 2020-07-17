@@ -123,7 +123,7 @@ func (f *udpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *udpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) gopacket.Layer {
+func (f *udpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	// Prepare for next call, this makes udpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -157,16 +157,17 @@ func (f *udpStreamFactory) prepareProtocalLayer(netLayer gopacket.NetworkLayer) 
 		panic("Unsupported network layer value")
 	}
 
-	return udp
+	return []gopacket.Layer{udp}
 }
 
-func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer gopacket.Layer, payload []byte) {
+func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
 
 	netFlow := netLayer.NetworkFlow()
-
+	// TODO: check length of slice
+	transportLayer := transportLayers[0]
 	// Need the workaroud "udp.SetInternalPortsForTesting()" to get correct transport flow key
 	udp := transportLayer.(*layers.UDP)
 	udp.SetInternalPortsForTesting()

@@ -29,9 +29,9 @@ const (
 // Could be TransportLayer protocols lik TCP/UDP or control protocols like ICMPv4/ICMPv6
 type streamProtocolLayer interface {
 	// Prepare protocol layer before it could be serialized to wire format
-	prepareProtocalLayer(gopacket.NetworkLayer) gopacket.Layer
+	prepareProtocalLayers(gopacket.NetworkLayer) []gopacket.Layer
 	// Post processing after the packet is sent.
-	onSend(gopacket.NetworkLayer, gopacket.Layer, []byte)
+	onSend(gopacket.NetworkLayer, []gopacket.Layer, []byte)
 	// Post processing after a packet is received.
 	onReceive(gopacket.Packet)
 
@@ -333,7 +333,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 
 	defer m.streamFactory.showStats()
 	for {
-		t := m.streamFactory.prepareProtocalLayer(netLayer)
+		protoLayers := m.streamFactory.prepareProtocalLayers(netLayer)
 
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
@@ -349,11 +349,16 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 					panic("Failed to get random IP")
 				}
 			}
-
-			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t, err)
+			l := []gopacket.SerializableLayer{v}
+			for _, p := range protoLayers {
+				l = append(l, p.(gopacket.SerializableLayer))
+			}
+			l = append(l, gopacket.Payload(payload))
+			if err := m.rawSockSend(l...); err != nil {
+				// if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), protoLayers, err)
 			} else {
-				m.streamFactory.onSend(v, t, payload)
+				m.streamFactory.onSend(v, protoLayers, payload)
 			}
 
 		case *layers.IPv6:
@@ -369,10 +374,16 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 					panic("Failed to get random IP")
 				}
 			}
-			if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
-				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), t, err)
+			l := []gopacket.SerializableLayer{v}
+			for _, p := range protoLayers {
+				l = append(l, p.(gopacket.SerializableLayer))
+			}
+			l = append(l, gopacket.Payload(payload))
+
+			if err := m.rawSockSend(l...); err != nil {
+				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), protoLayers, err)
 			} else {
-				m.streamFactory.onSend(v, t, payload)
+				m.streamFactory.onSend(v, protoLayers, payload)
 			}
 
 		default:
