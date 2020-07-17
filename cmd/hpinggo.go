@@ -35,6 +35,7 @@ limitations under the License.
 // UDP:
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -c 20
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl
+// sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl -ipv6
 //
 // ICMP
 // sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.google.com -d 128 -icmp -c 20 -traceroute

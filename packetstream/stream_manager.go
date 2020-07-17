@@ -201,8 +201,8 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 				break
 			}
 		}
-		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n  cmdOpts %+v",
-			opt.RandDest, m.iface.Name, m.src, m.cmdOpts)
+		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n",
+			opt.RandDest, m.iface.Name, m.src)
 	}
 	m.streamFactory.setLocalEnpoint(layers.NewIPEndpoint(m.src))
 	m.open_pcap()
@@ -235,12 +235,19 @@ func (m *packetStreamMgmr) open_pcap() {
 	// TODO: Fix first ingress packet drop issue
 	// https://www.pico.net/kb/how-does-one-use-tcpdump-to-capture-incoming-traffic
 	var bpffilter string
+	ip := "ip"
+	icmp := "icmp"
+	if m.cmdOpts.IPv6 {
+		icmp = "icmp6"
+		ip = "ip6"
+	}
 	if m.cmdOpts.Udp {
-		bpffilter = fmt.Sprintf("udp or icmp and inbound")
+		// bpffilter = fmt.Sprintf("%s proto udp or %s proto %s and inbound", ip, ip, icmp)
+		bpffilter = fmt.Sprintf("udp or %s and %s and inbound", icmp, ip)
 	} else if m.cmdOpts.Icmp {
-		bpffilter = fmt.Sprintf("icmp and inbound")
+		bpffilter = fmt.Sprintf("%s and inbound", icmp)
 	} else {
-		bpffilter = fmt.Sprintf("tcp or icmp and inbound")
+		bpffilter = fmt.Sprintf("tcp or %s and %s and inbound", icmp, ip)
 	}
 
 	log.V(1).Infof("Using BPF filter %q\n", bpffilter)

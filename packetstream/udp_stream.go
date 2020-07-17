@@ -234,18 +234,47 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 					}
 				}
 			}
-			// This is an ICMP reply but no matching udp content found there.
+			// This is an ICMP message but no matching udp content found there.
 			if s == nil {
-				log.Errorf("Unusable packet: %v", packet)
+				log.Infof("Unusable packet: %v", packet)
 				return
 			}
 		}
 	} else {
-		// TODO: handle icmpv6
 		icmp, ok := packet.Layer(layers.LayerTypeICMPv6).(*layers.ICMPv6)
 		if ok {
-			_ = icmp
-			return
+			typeCode := icmp.TypeCode
+			if typeCode.Type() == layers.ICMPv6TypeDestinationUnreachable ||
+				typeCode.Type() == layers.ICMPv6TypeTimeExceeded {
+				payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
+				if ok {
+					// The first 4 bytes is Unused for the two types of icmpv6 message
+					// https://tools.ietf.org/html/rfc4443#section-3.1
+					p := gopacket.NewPacket(payload.LayerContents()[4:], layers.LayerTypeIPv6, gopacket.Default)
+					if p.TransportLayer() != nil && p.TransportLayer().LayerType() == layers.LayerTypeUDP {
+						kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
+						s = f.streams[kEgress]
+						if s != nil {
+							if f.cmdOpts.TraceRoute {
+								LogTraceRouteIPv6(f.srcTTL, s.ciEgress, typeCode, packet)
+								if !f.cmdOpts.TraceRouteKeepTTL {
+									f.srcTTL++
+								}
+							} else {
+								LogICMPv6(typeCode, kEgress.String(), s.ciEgress, packet)
+							}
+
+						} else {
+							log.Infof(" %v timed out?", kEgress)
+						}
+					}
+				}
+			}
+			// This is an ICMPv6 message  but no matching udp content found there.
+			if s == nil {
+				log.Infof("Unusable packet: %v", packet)
+				return
+			}
 		}
 	}
 	if s == nil {
