@@ -219,7 +219,31 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 	kEgress := icmpKey{netflow.Reverse(), icmp.Id, icmp.Seq}
 	// Found ingress flow for the corresponding egress flow.
 	s := f.streams[kEgress]
-	if s != nil {
+	if s == nil && f.cmdOpts.TraceRoute {
+		if typeCode.Type() == layers.ICMPv4TypeDestinationUnreachable ||
+			typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
+			payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
+			if ok {
+				// Parsing through content of icmp reply. Assuming all ok, otherwise crash
+				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
+				icmpEgress, ok := p.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+				if ok {
+					netflow = p.NetworkLayer().NetworkFlow()
+					kEgress = icmpKey{netflow, icmpEgress.Id, icmpEgress.Seq}
+					s = f.streams[kEgress]
+					if s != nil {
+						if f.cmdOpts.TraceRoute {
+							LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
+							// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+						}
+					}
+				}
+			}
+		}
+	}
+	if s == nil {
+		log.V(2).Infof("Unknown ICMP reply: %v", packet)
+	} else {
 		log.V(5).Infof("[%v]: The opposite ingress packet arrived", s.key)
 		meta := packet.Metadata()
 		s.bytesIngress += int64(meta.CaptureLength)
@@ -230,37 +254,13 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 		}
 		f.updateStreamRecvStats(s.ciIngress, s.ciEgress)
 		kIngress := icmpKey{netflow, icmp.Id, icmp.Seq}
-		LogICMPv4(icmp.TypeCode, kIngress.String(), s.ciEgress, packet)
-
+		if typeCode.Type() != layers.ICMPv4TypeDestinationUnreachable &&
+			typeCode.Type() != layers.ICMPv4TypeTimeExceeded {
+			LogICMPv4(icmp.TypeCode, kIngress.String(), s.ciEgress, packet)
+		}
 		s.done = true
 		s.maybeFinish()
 		f.delete(s)
-	} else {
-		if f.cmdOpts.TraceRoute {
-			if typeCode.Type() == layers.ICMPv4TypeDestinationUnreachable ||
-				typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
-				payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
-				if ok {
-					// Parsing through content of icmp reply. Assuming all ok, otherwise crash
-					p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
-					icmpEgress, ok := p.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
-					if ok {
-						netflow = p.NetworkLayer().NetworkFlow()
-						kEgress = icmpKey{netflow, icmpEgress.Id, icmpEgress.Seq}
-						s = f.streams[kEgress]
-						if s != nil {
-							if f.cmdOpts.TraceRoute {
-								LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
-								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
-							}
-						}
-					}
-				}
-			}
-		}
-		if s == nil {
-			log.V(2).Infof("Unknown ICMP reply: %v", packet)
-		}
 	}
 }
 
