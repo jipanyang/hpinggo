@@ -36,9 +36,12 @@ limitations under the License.
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -c 20
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl -ipv6
+// sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ipv6  -c 15
+
 //
 // ICMP
 // sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.google.com -d 128 -icmp -c 20 -traceroute
+// sudo hpinggo -target www.google.com -d 128 -c 15 -traceroute -ipv6 -icmp
 
 package main
 
@@ -96,9 +99,6 @@ var (
 func init() {
 	// Config command-line flags.
 	flag.DurationVar(&opt.Interval, "interval", 1*time.Second, "Interval at which to send each packet.")
-	flag.StringVar(&opt.DisplayPrefix, "display_prefix", "", "Per output line prefix.")
-	flag.StringVar(&opt.DisplayIndent, "display_indent", "  ", "Output line, per nesting-level indent.")
-	flag.StringVar(&opt.Timestamp, "timestamp", "", "Specify timestamp formatting in output")
 	flag.StringVar(&opt.RandDest, "rand-dest", "", "Enables the random destination mode, x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.StringVar(&opt.RandSource, "rand-source", "", "Enables the random source mode,  x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "Set packet body size")

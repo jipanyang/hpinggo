@@ -149,7 +149,11 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.
 	}
 
 	if opt.Icmp {
-		m.streamFactory = newIcmpStreamFactory(ctx, opt)
+		if opt.IPv6 {
+			m.streamFactory = newIcmpv6StreamFactory(ctx, opt)
+		} else {
+			m.streamFactory = newIcmpv4StreamFactory(ctx, opt)
+		}
 	} else if opt.Udp {
 		m.streamFactory = newUdpStreamFactory(ctx, opt)
 	} else {
@@ -262,6 +266,8 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 		return err
 	}
 	packetData := m.buf.Bytes()
+	// p := gopacket.NewPacket(packetData, layers.LayerTypeIPv6, gopacket.Default)
+	// log.V(5).Infof("NewPacket: [%v]", p)
 
 	var ip net.IP
 	switch v := l[0].(type) {
@@ -334,7 +340,6 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 	defer m.streamFactory.showStats()
 	for {
 		protoLayers := m.streamFactory.prepareProtocalLayers(netLayer)
-
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
 			if m.cmdOpts.RandDest != "" {

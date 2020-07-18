@@ -13,6 +13,14 @@ import (
 	"time"
 )
 
+// for tracking icmp request and reply
+// IPv4:
+//   ICMPv4TypeEchoRequest/Reply
+//   ICMPv4TypeTimestampRequest/Reply
+//   ICMPv4TypeInfoRequest/Reply
+//   ICMPv4TypeAddressMaskRequest/Reply
+// Not supporting stream matching for other ICMP messages like ICMPv4TypeDestinationUnreachable/ICMPv4TypeRedirect
+
 func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
 
@@ -20,7 +28,7 @@ func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, ciEgress *gopacket.Ca
 	log.V(2).Infof("%v", packet)
 }
 
-func LogTraceRoute(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
+func LogTraceRouteIPv4(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
 	netflow := packet.NetworkLayer().NetworkFlow()
 	ipv4 := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 	name, _ := net.LookupAddr(ipv4.SrcIP.String())
@@ -33,12 +41,6 @@ func LogTraceRoute(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.IC
 	log.V(2).Infof("%v", packet)
 }
 
-// for tracking icmp request and reply
-// ICMPv4TypeEchoRequest
-// ICMPv4TypeTimestampRequest
-// ICMPv4TypeInfoRequest
-// ICMPv4TypeAddressMaskRequest
-// Not supporting other ICMP type like ICMPv4TypeDestinationUnreachable/ICMPv4TypeRedirect
 type icmpKey struct {
 	net gopacket.Flow
 	id  uint16
@@ -99,7 +101,7 @@ type icmpStreamFactory struct {
 }
 
 // Create a new stream factory for ICMP transport layer
-func newIcmpStreamFactory(ctx context.Context, opt options.Options) *icmpStreamFactory {
+func newIcmpv4StreamFactory(ctx context.Context, opt options.Options) *icmpStreamFactory {
 	f := &icmpStreamFactory{
 		ctx:       ctx,
 		streams:   make(map[icmpKey]*icmpStream),
@@ -164,6 +166,9 @@ func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
+	if !f.cmdOpts.TraceRouteKeepTTL {
+		f.srcTTL++
+	}
 
 	netFlow := netLayer.NetworkFlow()
 
@@ -183,8 +188,8 @@ func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []
 	// Fake CaptureInfo since we don't capture on egress
 	ci := gopacket.CaptureInfo{
 		Timestamp:     time.Now(),
-		CaptureLength: (len(payload)) + 8, // what is the length of icmp/ip/ether headers?
-		Length:        (len(payload)) + 8,
+		CaptureLength: (len(payload)) + 8, // TODO: fix the length error
+		Length:        (len(payload)) + 8, // TODO: fix the length error
 	}
 	s := &icmpStream{key: k, ciEgress: &ci, lastPacketSeen: ci.Timestamp}
 	f.streams[k] = s
@@ -245,11 +250,8 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 						s = f.streams[kEgress]
 						if s != nil {
 							if f.cmdOpts.TraceRoute {
-								LogTraceRoute(f.srcTTL, s.ciEgress, typeCode, packet)
+								LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
 								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
-								if !f.cmdOpts.TraceRouteKeepTTL {
-									f.srcTTL++
-								}
 							}
 						}
 					}

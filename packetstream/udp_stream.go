@@ -164,6 +164,9 @@ func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
+	if !f.cmdOpts.TraceRouteKeepTTL {
+		f.srcTTL++
+	}
 
 	netFlow := netLayer.NetworkFlow()
 	// TODO: check length of slice
@@ -220,11 +223,8 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						s = f.streams[kEgress]
 						if s != nil {
 							if f.cmdOpts.TraceRoute {
-								LogTraceRoute(f.srcTTL, s.ciEgress, typeCode, packet)
+								LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
 								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
-								if !f.cmdOpts.TraceRouteKeepTTL {
-									f.srcTTL++
-								}
 							} else {
 								LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
@@ -258,9 +258,6 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						if s != nil {
 							if f.cmdOpts.TraceRoute {
 								LogTraceRouteIPv6(f.srcTTL, s.ciEgress, typeCode, packet)
-								if !f.cmdOpts.TraceRouteKeepTTL {
-									f.srcTTL++
-								}
 							} else {
 								LogICMPv6(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
