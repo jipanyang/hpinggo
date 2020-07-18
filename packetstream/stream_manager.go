@@ -246,12 +246,14 @@ func (m *packetStreamMgmr) open_pcap() {
 		ip = "ip6"
 	}
 	if m.cmdOpts.Udp {
-		// bpffilter = fmt.Sprintf("%s proto udp or %s proto %s and inbound", ip, ip, icmp)
-		bpffilter = fmt.Sprintf("udp or %s and %s and inbound", icmp, ip)
+		// bpffilter = fmt.Sprintf("udp or %s and %s and inbound", icmp, ip)
+		bpffilter = fmt.Sprintf("udp or %s and %s", icmp, ip)
 	} else if m.cmdOpts.Icmp {
-		bpffilter = fmt.Sprintf("%s and inbound", icmp)
+		// bpffilter = fmt.Sprintf("%s and inbound", icmp)
+		bpffilter = fmt.Sprintf("%s", icmp)
 	} else {
-		bpffilter = fmt.Sprintf("tcp or %s and %s and inbound", icmp, ip)
+		// bpffilter = fmt.Sprintf("tcp or %s and %s and inbound", icmp, ip)
+		bpffilter = fmt.Sprintf("tcp or %s and %s", icmp, ip)
 	}
 
 	log.V(1).Infof("Using BPF filter %q\n", bpffilter)

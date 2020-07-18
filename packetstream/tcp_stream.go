@@ -188,7 +188,12 @@ func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 		log.Errorf("Unusable packet: %v", packet)
 		return
 	}
-
+	netflow := packet.NetworkLayer().NetworkFlow()
+	// Deal with packets targeting local endpoint for stream processing. May need change for other features.
+	if f.localEnpoint != netflow.Dst() {
+		log.V(5).Infof("Skip non-ingress packets: %v", packet)
+		return
+	}
 	// Check ICMPv4 first
 	icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
 	if ok {

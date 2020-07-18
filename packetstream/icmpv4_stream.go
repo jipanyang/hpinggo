@@ -216,6 +216,12 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 	typeCode := icmp.TypeCode
 	netflow := packet.NetworkLayer().NetworkFlow()
 
+	// Deal with packets targeting local endpoint for stream processing. May need change for other features.
+	if f.localEnpoint != netflow.Dst() {
+		log.V(5).Infof("Skip non-ingress packets: %v", packet)
+		return
+	}
+
 	kEgress := icmpKey{netflow.Reverse(), icmp.Id, icmp.Seq}
 	// Found ingress flow for the corresponding egress flow.
 	s := f.streams[kEgress]
@@ -233,7 +239,11 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 					s = f.streams[kEgress]
 					if s != nil {
 						if f.cmdOpts.TraceRoute {
-							LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
+							ttl := f.srcTTL
+							if !f.cmdOpts.TraceRouteKeepTTL {
+								ttl -= 1
+							}
+							LogTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
 							// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 						}
 					}

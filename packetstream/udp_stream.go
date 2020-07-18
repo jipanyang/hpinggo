@@ -207,6 +207,12 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 		log.Errorf("Unusable packet: %v", packet)
 		return
 	}
+	netflow := packet.NetworkLayer().NetworkFlow()
+	// Deal with packets targeting local endpoint for stream processing. May need change for other features.
+	if f.localEnpoint != netflow.Dst() {
+		log.V(5).Infof("Skip non-ingress packets: %v", packet)
+		return
+	}
 	var s *udpStream = nil
 	// record the icmp reply for udp stream
 	if !f.cmdOpts.IPv6 {
@@ -223,7 +229,11 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						s = f.streams[kEgress]
 						if s != nil {
 							if f.cmdOpts.TraceRoute {
-								LogTraceRouteIPv4(f.srcTTL, s.ciEgress, typeCode, packet)
+								ttl := f.srcTTL
+								if !f.cmdOpts.TraceRouteKeepTTL {
+									ttl -= 1
+								}
+								LogTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
 								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 							} else {
 								LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
@@ -257,7 +267,11 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 						s = f.streams[kEgress]
 						if s != nil {
 							if f.cmdOpts.TraceRoute {
-								LogTraceRouteIPv6(f.srcTTL, s.ciEgress, typeCode, packet)
+								ttl := f.srcTTL
+								if !f.cmdOpts.TraceRouteKeepTTL {
+									ttl -= 1
+								}
+								LogTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
 							} else {
 								LogICMPv6(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
