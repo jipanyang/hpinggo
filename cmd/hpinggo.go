@@ -55,7 +55,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-
 	"time"
 
 	log "github.com/golang/glog"
