@@ -169,19 +169,12 @@ func main() {
 	displayOptions(ctx, opt)
 
 	var ips []net.IP
+	var err error
 	// Get remote target addresses
 	if opt.RandDest == "" {
-		if *target == "" {
-			log.Exitf("Remote target missing\n")
-		}
-
-		var err error
-		ips, err = net.LookupIP(*target)
+		ips, err = getTargetIPs(*target, opt.IPv6)
 		if err != nil {
-			log.Exitf("Could not get IPs: %v\n", err)
-		}
-		for _, ip := range ips {
-			log.Infof("%s : %s\n", *target, ip.String())
+			log.Fatal(err)
 		}
 	}
 
@@ -198,22 +191,6 @@ func main() {
 	defer util.Run()()
 
 	for idx, ip := range ips {
-		if !opt.IPv6 {
-			if ip = ip.To4(); ip == nil {
-				log.Infof("non-ipv4: %v\n", ips[idx])
-				continue
-			}
-		} else {
-			tmpIp := ip
-			if tmpIp = tmpIp.To4(); tmpIp != nil {
-				log.Infof("non-ipv6: %v\n", ips[idx])
-				continue
-			}
-			if ip = ip.To16(); ip == nil {
-				log.Infof("non-ipv6: %v\n", ips[idx])
-				continue
-			}
-		}
 		if opt.Scan != "" {
 			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
 			s, err := scanner.NewScanner(ctx, ip, fd, opt)
@@ -268,7 +245,40 @@ func displayOptions(ctx context.Context, opt options.Options) error {
 	return nil
 }
 
-// TODO: support AF_INET6 for ipv6 based on opt.IPv6
+// Get IPv4 or IPv6 addresses for a target name
+func getTargetIPs(target string, ipv6 bool) ([]net.IP, error) {
+	if target == "" {
+		return nil, fmt.Errorf("Remote target missing")
+	}
+
+	ips, err := net.LookupIP(target)
+	if err != nil {
+		return nil, err
+	}
+	var ipsVersioned []net.IP
+	for idx, ip := range ips {
+		log.Infof("%s : %s\n", target, ip.String())
+		if !ipv6 {
+			if ip = ip.To4(); ip == nil {
+				log.Infof("non-ipv4: %v\n", ips[idx])
+				continue
+			}
+		} else {
+			tmpIp := ip
+			if tmpIp = tmpIp.To4(); tmpIp != nil {
+				log.Infof("non-ipv6: %v\n", ips[idx])
+				continue
+			}
+			if ip = ip.To16(); ip == nil {
+				log.Infof("non-ipv6: %v\n", ips[idx])
+				continue
+			}
+		}
+		ipsVersioned = append(ipsVersioned, ip)
+	}
+	return ipsVersioned, nil
+}
+
 func open_sockraw() int {
 	var domain int
 

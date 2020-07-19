@@ -690,7 +690,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
 				log.Infof("  port %v closed", tcp.SrcPort)
-				fmt.Fprintf(os.Stderr, "  port %v closed", tcp.SrcPort)
+				// fmt.Fprintf(os.Stderr, "  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK { //
 				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
