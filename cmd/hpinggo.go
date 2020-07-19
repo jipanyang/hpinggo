@@ -200,17 +200,17 @@ func main() {
 	for idx, ip := range ips {
 		if !opt.IPv6 {
 			if ip = ip.To4(); ip == nil {
-				log.Errorf("non-ipv4: %v\n", ips[idx])
+				log.Infof("non-ipv4: %v\n", ips[idx])
 				continue
 			}
 		} else {
 			tmpIp := ip
 			if tmpIp = tmpIp.To4(); tmpIp != nil {
-				log.Errorf("non-ipv6: %v\n", ips[idx])
+				log.Infof("non-ipv6: %v\n", ips[idx])
 				continue
 			}
 			if ip = ip.To16(); ip == nil {
-				log.Errorf("non-ipv6: %v\n", ips[idx])
+				log.Infof("non-ipv6: %v\n", ips[idx])
 				continue
 			}
 		}
