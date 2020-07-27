@@ -45,6 +45,33 @@ func TestScannerIPv4(t *testing.T) {
 	}
 }
 
+// -target scanme.nmap.org  -scan '80,443'   -i 10ms -S  -raw_socket=false
+func TestScannerIPv4WithPcapSender(t *testing.T) {
+	if opt.IPv6 {
+		t.Skip("skipping test in ipv6 mode.")
+	}
+
+	ips, _ := getTargetIPs("scanme.nmap.org", opt.IPv6)
+	opt.Scan = "80,443"
+	opt.Interval = 10 * time.Microsecond
+	opt.TcpSyn = true
+	opt.RawSocket = false
+	ctx, _ := context.WithCancel(context.Background())
+	fd := open_sockraw()
+	for idx, ip := range ips {
+		t.Logf("Scanning %v ...\n", ips[idx])
+		s, err := scanner.NewScanner(ctx, ip, fd, opt)
+		if err != nil {
+			t.Fatalf("unable to create scanner for %v: %v", ip, err)
+			continue
+		}
+		if err := s.Scan(); err != nil {
+			t.Fatalf("unable to scan %v: %v", ip, err)
+		}
+		s.Close()
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Setup()
 
