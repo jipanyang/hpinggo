@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/gopacket"
@@ -128,9 +127,11 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 	s.open_pcap()
 	if !opt.RawSocket {
 		s.packetSender, err = NewPcapSender(ctxParent, s.dst, s.gw, s.src, s.iface, s.handle)
-		if err != nil {
-			return nil, err
-		}
+	} else {
+		s.packetSender, err = NewRawSocketSender(ctxParent, s.dst, s.gw, s.src, s.iface, fd)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return s, nil
@@ -302,21 +303,6 @@ func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, t
 					if err := s.rawNetSockSend(tcp); err != nil {
 						log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
 					}
-				} else if s.socketFd > 0 {
-					_ = eth
-					switch v := netLayer.(type) {
-					case *layers.IPv4:
-						if err := s.rawSockSend(v, tcp); err != nil {
-							log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
-						}
-					case *layers.IPv6:
-						if err := s.rawSockSend(v, tcp); err != nil {
-							log.Errorf("error raw socket sending to port %v: %v", tcp.DstPort, err)
-						}
-					default:
-						log.Errorf("cannot use layer type %v for tcp checksum network layer", netLayer.LayerType())
-					}
-
 				} else {
 					var payload []byte
 					if err := s.packetSender.send([]gopacket.Layer{tcp}, payload); err != nil {
@@ -382,44 +368,6 @@ func (s *scanner) send(l ...gopacket.SerializableLayer) error {
 		return err
 	}
 	return s.handle.WritePacketData(s.buf.Bytes())
-}
-
-// Raw socket send
-func (s *scanner) rawSockSend(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
-		return err
-	}
-	packetData := s.buf.Bytes()
-
-	ip := []byte(s.dst)
-
-	if !s.cmdOpts.IPv6 {
-
-		var dstIp [4]byte
-		copy(dstIp[:], ip[:4])
-
-		addr := syscall.SockaddrInet4{
-			Port: 0,
-			Addr: dstIp,
-		}
-		err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
-		if err != nil {
-			log.Fatal("Sendto:", err)
-		}
-	} else {
-		var dstIp [16]byte
-		copy(dstIp[:], ip[:16])
-
-		addr := syscall.SockaddrInet6{
-			Port: 0,
-			Addr: dstIp,
-		}
-		err := syscall.Sendto(s.socketFd, packetData, 0, &addr)
-		if err != nil {
-			log.Fatal("Sendto:", err)
-		}
-	}
-	return nil
 }
 
 // Raw socket send

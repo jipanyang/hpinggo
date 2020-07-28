@@ -13,7 +13,7 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
-// pcapSender handles packet sending on pcap interface
+// pcapSender handles packets to be sent on pcap interface
 // One usage example:
 // sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.yahoo.com  -scan '80,443' -i 1ms -S -logtostderr=false -raw_socket=false
 type pcapSender struct {
@@ -82,7 +82,7 @@ func NewPcapSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
 	return p, nil
 }
 
-func (p *pcapSender) Close() {
+func (p *pcapSender) close() {
 
 }
 
