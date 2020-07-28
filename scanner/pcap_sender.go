@@ -38,8 +38,8 @@ type pcapSender struct {
 
 // NewPcapSender creates a new Sender based on the input info,
 // it will use pcap interface for the sending .
-func NewPcapSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP, iface *net.Interface,
-	handle *pcap.Handle) (*pcapSender, error) {
+func NewPcapSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
+	iface *net.Interface, handle *pcap.Handle) (*pcapSender, error) {
 
 	p := &pcapSender{
 		ctx:    ctxParent,

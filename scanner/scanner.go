@@ -35,19 +35,12 @@ type portinfo struct {
 type scanner struct {
 	ctx context.Context
 
+	// pcap handle for receiving packets
+	handle *pcap.Handle
 	// iface is the interface to send packets on.
 	iface *net.Interface
 	// destination, gateway (if applicable), and source IP addresses to use.
 	dst, gw, src net.IP
-
-	handle   *pcap.Handle
-	socketFd int // fd of raw socket
-	ipConn   net.PacketConn
-
-	// opts and buf allow us to easily serialize packets in the send()
-	// method.
-	packetOpts gopacket.SerializeOptions
-	buf        gopacket.SerializeBuffer
 
 	// options specified at user command line
 	cmdOpts options.Options
@@ -62,20 +55,15 @@ type scanner struct {
 type sender interface {
 	// Compose new packet based on input data and send out packet on wire
 	send(layers []gopacket.Layer, payload []byte) error
+	close()
 }
 
 // NewScanner creates a new scanner for a given destination IP address, using
 // router to determine how to route packets to that IP.
 func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (*scanner, error) {
 	s := &scanner{
-		ctx:      ctxParent,
-		dst:      ip,
-		socketFd: fd,
-		packetOpts: gopacket.SerializeOptions{
-			FixLengths:       true,
-			ComputeChecksums: true,
-		},
-		buf:     gopacket.NewSerializeBuffer(),
+		ctx:     ctxParent,
+		dst:     ip,
 		cmdOpts: opt,
 		// Cover all ports possible to avoid lock and simplify update
 		portScan:         make([]portinfo, MaxPort+1),
@@ -95,22 +83,6 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 	log.Infof("scanning ip %v with interface %v, gateway %v, src %v\n", ip, iface.Name, gw, src)
 	s.gw, s.src, s.iface = gw, src, iface
 
-	if useListenPacket {
-		var ipConn net.PacketConn
-		var err error
-
-		if s.cmdOpts.IPv6 {
-			ipConn, err = net.ListenPacket("ip6:tcp", "::")
-		} else {
-			ipConn, err = net.ListenPacket("ip4:tcp", "0.0.0.0")
-		}
-
-		if err != nil {
-			panic(err)
-		}
-		s.ipConn = ipConn
-	}
-
 	for port := 0; port <= MaxPort; port++ {
 		s.portScan[port] = portinfo{
 			active: false,
@@ -126,9 +98,11 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 
 	s.open_pcap()
 	if !opt.RawSocket {
-		s.packetSender, err = NewPcapSender(ctxParent, s.dst, s.gw, s.src, s.iface, s.handle)
+		s.packetSender, err = NewPcapSender(ctxParent, s.dst, gw, src, iface, s.handle)
+	} else if useListenPacket {
+		s.packetSender, err = NewPacketConnSender(ctxParent, s.dst, gw, src, s.iface)
 	} else {
-		s.packetSender, err = NewRawSocketSender(ctxParent, s.dst, s.gw, s.src, s.iface, fd)
+		s.packetSender, err = NewRawSocketSender(ctxParent, s.dst, gw, src, s.iface, fd)
 	}
 	if err != nil {
 		return nil, err
@@ -139,7 +113,6 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 
 // scanner scans the dst IP address.
 func (s *scanner) Scan() error {
-	var eth layers.Ethernet
 
 	tcp := layers.TCP{
 		SrcPort: layers.TCPPort(s.cmdOpts.BaseSourcePort),
@@ -153,29 +126,6 @@ func (s *scanner) Scan() error {
 		ECE:     s.cmdOpts.TcpEce,
 		CWR:     s.cmdOpts.TcpCwr,
 		NS:      s.cmdOpts.TcpNs,
-	}
-	// var networkLayer gopacket.NetworkLayer
-	var ipv6 layers.IPv6
-	var ipv4 layers.IPv4
-
-	if s.cmdOpts.IPv6 {
-		ipv6 = layers.IPv6{
-			SrcIP:      s.src,
-			DstIP:      s.dst,
-			Version:    6,
-			HopLimit:   255,
-			NextHeader: layers.IPProtocolTCP,
-		}
-		tcp.SetNetworkLayerForChecksum(&ipv6)
-	} else {
-		ipv4 = layers.IPv4{
-			SrcIP:    s.src,
-			DstIP:    s.dst,
-			Version:  4,
-			TTL:      64,
-			Protocol: layers.IPProtocolTCP,
-		}
-		tcp.SetNetworkLayerForChecksum(&ipv4)
 	}
 
 	// Create the flow we expect returning packets to have, so we can check
@@ -193,12 +143,12 @@ func (s *scanner) Scan() error {
 	defer close(stop)
 	log.Infof("Start Scan, time: %v", time.Now())
 	if s.cmdOpts.IPv6 {
-		s.sender(&eth, &ipv6, &tcp)
+		s.sender(&tcp)
 	} else {
-		s.sender(&eth, &ipv4, &tcp)
+		s.sender(&tcp)
 	}
 
-	log.Infof("Return from Scan, socketFd: %v, useListenPacket: %v, time: %v", s.socketFd, useListenPacket, time.Now())
+	log.Infof("Return from Scan, useListenPacket: %v, time: %v", useListenPacket, time.Now())
 	return nil
 }
 
@@ -281,7 +231,8 @@ func (s *scanner) open_pcap() {
 	s.handle = handle
 }
 
-func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, tcp *layers.TCP) {
+// TODO: fill payload as requested
+func (s *scanner) sender(tcp *layers.TCP) {
 	retry := 0
 	interval := s.cmdOpts.Interval
 
@@ -298,17 +249,12 @@ func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, t
 				s.portScan[port].retry--
 				tcp.DstPort = layers.TCPPort(port)
 				s.portScan[port].sendTime = time.Now()
-				if useListenPacket {
-					_ = eth
-					if err := s.rawNetSockSend(tcp); err != nil {
-						log.Errorf("error net.ListenPacket socket sending to port %v: %v", tcp.DstPort, err)
-					}
-				} else {
-					var payload []byte
-					if err := s.packetSender.send([]gopacket.Layer{tcp}, payload); err != nil {
-						log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
-					}
+				// TODO: fill payload as requested
+				var payload []byte
+				if err := s.packetSender.send([]gopacket.Layer{tcp}, payload); err != nil {
+					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 				}
+
 				select {
 				case <-time.After(interval):
 					continue
@@ -360,33 +306,6 @@ func (s *scanner) sender(eth *layers.Ethernet, netLayer gopacket.NetworkLayer, t
 			log.Infof("SLOWING DONW to interval %v", interval)
 		}
 	}
-}
-
-// pcap send sends the given layers as a single packet on the network.
-func (s *scanner) send(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
-		return err
-	}
-	return s.handle.WritePacketData(s.buf.Bytes())
-}
-
-// Raw socket send
-func (s *scanner) rawNetSockSend(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(s.buf, s.packetOpts, l...); err != nil {
-		return err
-	}
-
-	dstIPaddr := net.IPAddr{
-		IP: s.dst,
-	}
-
-	packetData := s.buf.Bytes()
-
-	_, err := s.ipConn.WriteTo(packetData, &dstIPaddr)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // receiver watches a handle for incoming responses we might care about, and prints them.
