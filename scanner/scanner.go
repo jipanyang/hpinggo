@@ -1,3 +1,5 @@
+// scanner scans a target using TCP or any other protocol available.
+// It aims to find all open services supported by the target.
 package scanner
 
 import (
@@ -31,6 +33,13 @@ type portinfo struct {
 	recvTime time.Time // for receiver consumtion only
 }
 
+// Scanner represents a module which may perform scanning function.
+// It may be closed with Close() call.
+type Scanner interface {
+	Scan() error
+	Close()
+}
+
 // scanner handles scanning a single IP address.
 type scanner struct {
 	ctx context.Context
@@ -58,15 +67,14 @@ type sender interface {
 	close()
 }
 
-// NewScanner creates a new scanner for a given destination IP address, using
-// router to determine how to route packets to that IP.
-func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (*scanner, error) {
+// NewScanner creates a new scanner for a given destination IP address.
+// It utilizes local routing info to determine how to route packets to that IP.
+func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (Scanner, error) {
 	s := &scanner{
-		ctx:     ctxParent,
-		dst:     ip,
-		cmdOpts: opt,
-		// Cover all ports possible to avoid lock and simplify update
-		portScan:         make([]portinfo, MaxPort+1),
+		ctx:              ctxParent,
+		dst:              ip,
+		cmdOpts:          opt,
+		portScan:         make([]portinfo, MaxPort+1), // Cover all ports possible to avoid lock and simplify update
 		averageLatencyNs: 0,
 	}
 
@@ -98,11 +106,11 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 
 	s.open_pcap()
 	if !opt.RawSocket {
-		s.packetSender, err = NewPcapSender(ctxParent, s.dst, gw, src, iface, s.handle)
+		s.packetSender, err = newPcapSender(ctxParent, s.dst, gw, src, iface, s.handle)
 	} else if useListenPacket {
-		s.packetSender, err = NewPacketConnSender(ctxParent, s.dst, gw, src, s.iface)
+		s.packetSender, err = newPacketConnSender(ctxParent, s.dst, gw, src, s.iface)
 	} else {
-		s.packetSender, err = NewRawSocketSender(ctxParent, s.dst, gw, src, s.iface, fd)
+		s.packetSender, err = newRawSocketSender(ctxParent, s.dst, gw, src, s.iface, fd)
 	}
 	if err != nil {
 		return nil, err

@@ -32,9 +32,9 @@ type rawSocketSender struct {
 	socketFd int // fd of raw socket
 }
 
-// NewRawSocketSender creates a new Sender based on the input info,
+// newRawSocketSender creates a new Sender based on the input info,
 // it will use raw socket interface for the sending .
-func NewRawSocketSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
+func newRawSocketSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
 	iface *net.Interface, fd int) (*rawSocketSender, error) {
 
 	r := &rawSocketSender{

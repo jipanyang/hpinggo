@@ -36,9 +36,9 @@ type pcapSender struct {
 	buf        gopacket.SerializeBuffer
 }
 
-// NewPcapSender creates a new Sender based on the input info,
+// newPcapSender creates a new Sender based on the input info,
 // it will use pcap interface for the sending .
-func NewPcapSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
+func newPcapSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
 	iface *net.Interface, handle *pcap.Handle) (*pcapSender, error) {
 
 	p := &pcapSender{
@@ -171,7 +171,7 @@ func ipv6LinkLocalUnicastAddr(ifi *net.Interface) net.IP {
 
 // Typical Neighbor Solicitation messages are multicast for address resolution
 // and unicast when the reach ability of a neighboring node is being verified.
-// SolicitedNodeMulticast returns the solicited-node multicast address for
+// solicitedNodeMulticast returns the solicited-node multicast address for
 // an IPv6 address.
 // For a multicast Neighbor Solicitation message, the Destination Address field is
 // set to the Ethernet MAC address that corresponds to the solicited-node address of the target.
@@ -184,7 +184,7 @@ func ipv6LinkLocalUnicastAddr(ifi *net.Interface) net.IP {
 // address of the target. For a unicast Neighbor Solicitation, the Destination Address field is set to
 // the unicast address of the target.
 
-func SolicitedNodeMulticast(ip net.IP) (net.HardwareAddr, net.IP, error) {
+func solicitedNodeMulticast(ip net.IP) (net.HardwareAddr, net.IP, error) {
 	if ip.To16() == nil || ip.To4() != nil {
 		return nil, nil, fmt.Errorf("not IPv6 address: %q", ip.String())
 	}
@@ -211,7 +211,7 @@ func (p *pcapSender) getHwAddrWithNs() (net.HardwareAddr, error) {
 		nsDst = p.gw
 	}
 
-	dstMac, dstIp, err := SolicitedNodeMulticast(nsDst)
+	dstMac, dstIp, err := solicitedNodeMulticast(nsDst)
 	if err != nil {
 		return nil, err
 	}

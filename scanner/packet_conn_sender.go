@@ -30,9 +30,9 @@ type packetConnSender struct {
 	ipConn net.PacketConn
 }
 
-// NewPacketConnSender creates a new Sender based on the input info,
+// newPacketConnSender creates a new Sender based on the input info,
 // it will use PacketConn interface for the sending .
-func NewPacketConnSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
+func newPacketConnSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
 	iface *net.Interface) (*packetConnSender, error) {
 
 	p := &packetConnSender{
