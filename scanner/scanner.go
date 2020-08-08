@@ -69,7 +69,7 @@ type sender interface {
 
 // NewScanner creates a new scanner for a given destination IP address.
 // It utilizes local routing info to determine how to route packets to that IP.
-func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Options) (Scanner, error) {
+func NewScanner(ctxParent context.Context, ip net.IP, opt options.Options) (Scanner, error) {
 	s := &scanner{
 		ctx:              ctxParent,
 		dst:              ip,
@@ -110,7 +110,7 @@ func NewScanner(ctxParent context.Context, ip net.IP, fd int, opt options.Option
 	} else if useListenPacket {
 		s.packetSender, err = newPacketConnSender(ctxParent, s.dst, gw, src, s.iface)
 	} else {
-		s.packetSender, err = newRawSocketSender(ctxParent, s.dst, gw, src, s.iface, fd)
+		s.packetSender, err = newRawSocketSender(ctxParent, s.dst, gw, src, s.iface)
 	}
 	if err != nil {
 		return nil, err

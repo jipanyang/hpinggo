@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/jipanyang/hpinggo/utilities"
+	"golang.org/x/sys/unix"
 )
 
 // rawSocketSender handles packet to be sent on raw socket interface
@@ -35,15 +37,14 @@ type rawSocketSender struct {
 // newRawSocketSender creates a new Sender based on the input info,
 // it will use raw socket interface for the sending .
 func newRawSocketSender(ctxParent context.Context, dst net.IP, gw net.IP, src net.IP,
-	iface *net.Interface, fd int) (*rawSocketSender, error) {
+	iface *net.Interface) (*rawSocketSender, error) {
 
 	r := &rawSocketSender{
-		ctx:      ctxParent,
-		dst:      dst,
-		gw:       gw,
-		src:      src,
-		iface:    iface,
-		socketFd: fd,
+		ctx:   ctxParent,
+		dst:   dst,
+		gw:    gw,
+		src:   src,
+		iface: iface,
 		packetOpts: gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
@@ -59,8 +60,14 @@ func newRawSocketSender(ctxParent context.Context, dst net.IP, gw net.IP, src ne
 	} else {
 		return nil, fmt.Errorf("Invalid dst IP: %v", dst)
 	}
+	var err error
+	if r.ethType == layers.EthernetTypeIPv4 {
+		r.socketFd, err = utilities.OpenRawSocket(unix.AF_INET)
+	} else {
+		r.socketFd, err = utilities.OpenRawSocket(unix.AF_INET6)
+	}
 
-	return r, nil
+	return r, err
 }
 
 func (r *rawSocketSender) close() {

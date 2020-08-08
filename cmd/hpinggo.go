@@ -62,7 +62,6 @@ import (
 	"github.com/jipanyang/hpinggo/options"
 	"github.com/jipanyang/hpinggo/packetstream"
 	"github.com/jipanyang/hpinggo/scanner"
-	"golang.org/x/sys/unix"
 )
 
 // Default value for options.
@@ -181,18 +180,13 @@ func main() {
 	if opt.BaseSourcePort == DEFAULT_INITSPORT {
 		opt.BaseSourcePort = 1024 + (rand.Intn(2000))
 	}
-	fd := -1
-	if opt.RawSocket {
-		fd = open_sockraw()
-		log.V(1).Infof("Opened raw socket: %v\n", fd)
-	}
 
 	defer util.Run()()
 
 	for idx, ip := range ips {
 		if opt.Scan != "" {
 			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
-			s, err := scanner.NewScanner(ctx, ip, fd, opt)
+			s, err := scanner.NewScanner(ctx, ip, opt)
 			if err != nil {
 				log.Errorf("unable to create scanner for %v: %v", ip, err)
 				continue
@@ -202,7 +196,7 @@ func main() {
 			}
 			s.Close()
 		} else {
-			m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
+			m, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
 			if err != nil {
 				log.Errorf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 				continue
@@ -228,7 +222,7 @@ func main() {
 		} else {
 			ip = net.IPv4zero
 		}
-		m, err := packetstream.NewPacketStreamMgmr(ctx, ip, fd, opt)
+		m, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
 		if err != nil {
 			log.Exitf("Failed to create PacketStreamMgmr for %v: %v", ip, err)
 		}
@@ -276,37 +270,4 @@ func getTargetIPs(target string, ipv6 bool) ([]net.IP, error) {
 		ipsVersioned = append(ipsVersioned, ip)
 	}
 	return ipsVersioned, nil
-}
-
-func open_sockraw() int {
-	var domain int
-
-	if opt.IPv6 {
-		domain = unix.AF_INET6
-	} else {
-		domain = unix.AF_INET
-	}
-	fd, err := unix.Socket(domain, unix.SOCK_RAW, unix.IPPROTO_RAW)
-
-	if err != nil || fd < 0 {
-		log.Exitf("error creating a raw socket: %v\n", err)
-	}
-	err = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_BROADCAST, 1)
-	if err != nil {
-		unix.Close(fd)
-		log.Exitf("error enabling SO_BROADCAST: %v\n", err)
-	}
-
-	if opt.IPv6 {
-		err = unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_HDRINCL, 1)
-	} else {
-		err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, 1)
-	}
-
-	if err != nil {
-		unix.Close(fd)
-		log.Exitf("error enabling IP_HDRINCL: %v\n", err)
-	}
-
-	return fd
 }

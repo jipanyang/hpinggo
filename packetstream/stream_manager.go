@@ -3,12 +3,6 @@ package packetstream
 import (
 	"context"
 	"fmt"
-	log "github.com/golang/glog"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/routing"
-	"github.com/jipanyang/hpinggo/options"
 	"math/rand"
 	"net"
 	"os"
@@ -16,6 +10,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
+
+	log "github.com/golang/glog"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"github.com/google/gopacket/routing"
+	"github.com/jipanyang/hpinggo/options"
+	"github.com/jipanyang/hpinggo/utilities"
 )
 
 const (
@@ -135,17 +139,26 @@ type packetStreamMgmr struct {
 	cmdOpts options.Options
 }
 
-func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, fd int, opt options.Options) (*packetStreamMgmr, error) {
+func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, opt options.Options) (*packetStreamMgmr, error) {
 	m := &packetStreamMgmr{
-		ctx:      ctx,
-		dst:      dstIp,
-		socketFd: fd,
+		ctx: ctx,
+		dst: dstIp,
 		packetOpts: gopacket.SerializeOptions{
 			FixLengths:       true,
 			ComputeChecksums: true,
 		},
 		buf:     gopacket.NewSerializeBuffer(),
 		cmdOpts: opt,
+	}
+
+	var err error
+	if opt.IPv6 {
+		m.socketFd, err = utilities.OpenRawSocket(unix.AF_INET6)
+	} else {
+		m.socketFd, err = utilities.OpenRawSocket(unix.AF_INET)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if opt.Icmp {

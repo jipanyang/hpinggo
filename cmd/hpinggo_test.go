@@ -30,10 +30,9 @@ func TestScannerIPv4(t *testing.T) {
 	opt.Interval = 1 * time.Microsecond
 	opt.TcpSyn = true
 	ctx, _ := context.WithCancel(context.Background())
-	fd := open_sockraw()
 	for idx, ip := range ips {
 		t.Logf("Scanning %v ...\n", ips[idx])
-		s, err := scanner.NewScanner(ctx, ip, fd, opt)
+		s, err := scanner.NewScanner(ctx, ip, opt)
 		if err != nil {
 			t.Fatalf("unable to create scanner for %v: %v", ip, err)
 			continue
@@ -57,10 +56,9 @@ func TestScannerIPv4WithPcapSender(t *testing.T) {
 	opt.TcpSyn = true
 	opt.RawSocket = false
 	ctx, _ := context.WithCancel(context.Background())
-	fd := open_sockraw()
 	for idx, ip := range ips {
 		t.Logf("Scanning %v ...\n", ips[idx])
-		s, err := scanner.NewScanner(ctx, ip, fd, opt)
+		s, err := scanner.NewScanner(ctx, ip, opt)
 		if err != nil {
 			t.Fatalf("unable to create scanner for %v: %v", ip, err)
 			continue
