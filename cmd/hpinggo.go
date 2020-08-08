@@ -23,6 +23,7 @@ limitations under the License.
 //
 // No payload and increment destination port unconditionally(-p ++79):
 // sudo hpinggo -target www.google.com  -s 5432 -p ++79 -S -c 2
+// sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.google.com  -s 5432 -p ++79 -S -c 2
 //
 // With payload (-d) and increment destination port upon response (-p +80):
 // sudo hpinggo -target www.google.com  -s 5432 -p +80 -S -c 2 -d 512
@@ -37,12 +38,12 @@ limitations under the License.
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl -ipv6
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ipv6  -c 15
-
+//
 //
 // ICMP
 // sudo /usr/local/go/bin/go run cmd/hpinggo.go -target www.google.com -d 128 -icmp -c 20 -traceroute
 // sudo hpinggo -target www.google.com -d 128 -c 15 -traceroute -ipv6 -icmp
-
+//
 package main
 
 import (
