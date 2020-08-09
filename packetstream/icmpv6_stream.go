@@ -22,7 +22,7 @@ import (
 func LogICMPv6(typeCode layers.ICMPv6TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
 
-	fmt.Fprintf(os.Stderr, "[%v] %v  rtt=%v\n", key, typeCode.String(), delay)
+	fmt.Fprintf(os.Stdout, "[%v] %v  rtt=%v\n", key, typeCode.String(), delay)
 	log.V(2).Infof("%v", packet)
 }
 
@@ -32,10 +32,10 @@ func LogTraceRouteIPv6(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layer
 	name, _ := net.LookupAddr(ipv6.SrcIP.String())
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
 
-	fmt.Fprintf(os.Stderr, "hop=%v %v rtt=%v %v%v->%v\n",
+	fmt.Fprintf(os.Stdout, "hop=%v %v rtt=%v %v%v->%v\n",
 		ttl, typeCode.String(), delay, netflow.Src(), name, netflow.Dst())
 
-	// fmt.Fprintf(os.Stderr, "hop=%v hoprtt=%v from %v\n", ttl, delay, name)
+	// fmt.Fprintf(os.Stdout, "hop=%v hoprtt=%v from %v\n", ttl, delay, name)
 	log.V(2).Infof("%v", packet)
 }
 
@@ -258,7 +258,7 @@ func (f *icmpv6StreamFactory) onReceive(packet gopacket.Packet) {
 								ttl -= 1
 							}
 							LogTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
-							// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 						}
 					}
 				}
@@ -324,10 +324,10 @@ func (f *icmpv6StreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureI
 }
 
 func (f *icmpv6StreamFactory) showStats() {
-	fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
-	fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
+	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
+	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)
-	fmt.Fprintf(os.Stderr, "round-trip min/avg/max = %v/%v/%v\n",
+	fmt.Fprintf(os.Stdout, "round-trip min/avg/max = %v/%v/%v\n",
 		time.Duration(f.rttMin)*time.Nanosecond,
 		time.Duration(f.rttAvg)*time.Nanosecond,
 		time.Duration(f.rttMax)*time.Nanosecond)

@@ -14,7 +14,7 @@ import (
 )
 
 func LogUDPReply(packet gopacket.Packet, key string) {
-	fmt.Fprintf(os.Stderr, "[%v] got UDP reply\n", key)
+	fmt.Fprintf(os.Stdout, "[%v] got UDP reply\n", key)
 	log.V(2).Infof("%v", packet)
 }
 
@@ -234,7 +234,7 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 									ttl -= 1
 								}
 								LogTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
-								// fmt.Fprintf(os.Stderr, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+								// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 							} else {
 								LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
@@ -364,10 +364,10 @@ func (f *udpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo
 }
 
 func (f *udpStreamFactory) showStats() {
-	fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
-	fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
+	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
+	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)
-	fmt.Fprintf(os.Stderr, "round-trip min/avg/max = %v/%v/%v\n",
+	fmt.Fprintf(os.Stdout, "round-trip min/avg/max = %v/%v/%v\n",
 		time.Duration(f.rttMin)*time.Nanosecond,
 		time.Duration(f.rttAvg)*time.Nanosecond,
 		time.Duration(f.rttMax)*time.Nanosecond)

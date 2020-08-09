@@ -267,7 +267,7 @@ func (s *scanner) sender(tcp *layers.TCP) {
 				case <-time.After(interval):
 					continue
 				case <-s.ctx.Done():
-					fmt.Fprintf(os.Stderr, "Asked to terminiate early \n")
+					fmt.Fprintf(os.Stdout, "Asked to terminiate early \n")
 					return
 				}
 
@@ -295,16 +295,16 @@ func (s *scanner) sender(tcp *layers.TCP) {
 				time.Sleep(1 * time.Second)
 			}
 			log.Infof("Finish Scan, time: %v", time.Now())
-			fmt.Fprintf(os.Stderr, "All replies received. Done.\n")
-			fmt.Fprintf(os.Stderr, "Not responding ports: ")
+			fmt.Fprintf(os.Stdout, "All replies received. Done.\n")
+			fmt.Fprintf(os.Stdout, "Not responding ports: ")
 			for port, _ := range s.portScan {
 				// Exhausted all reties, but no response
 				if s.portScan[port].active && s.portScan[port].retry == 0 {
 					// TODO: get known port name , port_to_name(port)
-					fmt.Fprintf(os.Stderr, "(%v) ", layers.TCPPort(port))
+					fmt.Fprintf(os.Stdout, "(%v) ", layers.TCPPort(port))
 				}
 			}
-			fmt.Fprintf(os.Stderr, "\n\n")
+			fmt.Fprintf(os.Stdout, "\n\n")
 			break
 		}
 
@@ -360,14 +360,14 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 				log.V(6).Infof("dst port %v does not match", tcp.DstPort)
 			} else if tcp.RST {
 				log.Infof("  port %v closed", tcp.SrcPort)
-				// fmt.Fprintf(os.Stderr, "  port %v closed", tcp.SrcPort)
+				// fmt.Fprintf(os.Stdout, "  port %v closed", tcp.SrcPort)
 			} else if tcp.SYN && tcp.ACK { //
 				if !s.portScan[tcp.SrcPort].active {
 					log.Infof("  port %v open, duplicate response ", tcp.SrcPort)
 					continue
 				}
 				recvCount++
-				fmt.Fprintf(os.Stderr, "  port %v open\n", tcp.SrcPort)
+				fmt.Fprintf(os.Stdout, "  port %v open\n", tcp.SrcPort)
 				s.portScan[tcp.SrcPort].active = false
 				s.portScan[tcp.SrcPort].recvTime = time.Now()
 				//TODO: use float variable

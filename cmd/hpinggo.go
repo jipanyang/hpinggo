@@ -186,7 +186,7 @@ func main() {
 
 	for idx, ip := range ips {
 		if opt.Scan != "" {
-			fmt.Fprintf(os.Stderr, "Scanning %v ...\n", ips[idx])
+			fmt.Fprintf(os.Stdout, "Scanning %v ...\n", ips[idx])
 			s, err := scanner.NewScanner(ctx, ip, opt)
 			if err != nil {
 				log.Errorf("unable to create scanner for %v: %v", ip, err)

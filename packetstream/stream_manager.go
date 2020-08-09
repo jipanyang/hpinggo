@@ -421,7 +421,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 		case <-time.After(m.cmdOpts.Interval):
 			continue
 		case <-m.ctx.Done():
-			fmt.Fprintf(os.Stderr, "Asked to terminiate early \n")
+			fmt.Fprintf(os.Stdout, "Asked to terminiate early \n")
 			return nil
 		}
 	}

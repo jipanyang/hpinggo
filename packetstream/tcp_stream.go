@@ -273,10 +273,10 @@ func (f *tcpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo
 }
 
 func (f *tcpStreamFactory) showStats() {
-	fmt.Fprintf(os.Stderr, "\n--- hpinggo statistic ---\n")
-	fmt.Fprintf(os.Stderr, "%v packets tramitted, %v packets received\n",
+	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
+	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)
-	fmt.Fprintf(os.Stderr, "round-trip min/avg/max = %v/%v/%v\n",
+	fmt.Fprintf(os.Stdout, "round-trip min/avg/max = %v/%v/%v\n",
 		time.Duration(f.rttMin)*time.Nanosecond,
 		time.Duration(f.rttAvg)*time.Nanosecond,
 		time.Duration(f.rttMax)*time.Nanosecond)
