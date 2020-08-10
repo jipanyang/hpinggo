@@ -191,7 +191,7 @@ func TestTraceRouteIPv4Udp(t *testing.T) {
 	if opt.IPv6 {
 		t.Skip("skipping test in ipv6 mode.")
 	}
-
+	opt.Icmp = false
 	ips, _ := getTargetIPs("google.com", opt.IPv6)
 	opt.DestPort = "1234"
 	opt.Udp = true

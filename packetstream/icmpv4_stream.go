@@ -210,7 +210,8 @@ func (f *icmpStreamFactory) OnReceive(packet gopacket.Packet) {
 	}
 	icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
 	if !ok {
-		log.Errorf("Unusable packet: %v", packet)
+		log.Fatalf("Unusable packet: %v", packet)
+		log.Flush()
 		return
 	}
 	typeCode := icmp.TypeCode

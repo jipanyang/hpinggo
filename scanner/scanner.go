@@ -337,6 +337,7 @@ func (s *scanner) receiver(netFlow gopacket.Flow, stop chan struct{}) {
 		var packet gopacket.Packet
 		select {
 		case <-stop:
+			log.Warningf("Asked to stop")
 			return
 		case packet = <-in:
 			net := packet.NetworkLayer()

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -340,6 +339,8 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 			m.streamFactory.CollectOldStreams(timeout)
 
 		case <-stop:
+			log.Warningf("Asked to stop\n")
+			log.Infof("streamFactory:%T %+v\n", m.streamFactory, m.streamFactory)
 			return
 		}
 	}
@@ -359,6 +360,8 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 	}
 
 	defer m.streamFactory.ShowStats()
+	defer log.Flush()
+	log.Infof("streamFactory:%T %+v\n", m.streamFactory, m.streamFactory)
 	for {
 		protoLayers := m.streamFactory.PrepareProtocalLayers(netLayer)
 		switch v := netLayer.(type) {
@@ -427,7 +430,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 		case <-time.After(m.cmdOpts.Interval):
 			continue
 		case <-m.ctx.Done():
-			fmt.Fprintf(os.Stdout, "Asked to terminiate early \n")
+			log.Warningf("Asked to terminiate early \n")
 			return nil
 		}
 	}
@@ -459,14 +462,14 @@ func (m *packetStreamMgmr) StartStream() error {
 	stop := make(chan struct{})
 	go m.waitPackets(stop)
 	defer close(stop)
-	log.V(1).Infof("Start Streaming, time: %v", time.Now())
+	log.Infof("Start Streaming, time: %v", time.Now())
 	if m.cmdOpts.IPv6 {
 		m.sendPackets(&ipv6)
 	} else {
 		m.sendPackets(&ipv4)
 	}
 
-	log.V(1).Infof("Return from Stream, socketFd: %v, time: %v", m.socketFd, time.Now())
+	log.Infof("Return from Stream, time: %v", time.Now())
 	return nil
 }
 
