@@ -147,23 +147,24 @@ func TestStreamIPv4(t *testing.T) {
 }
 
 // sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Icmp
-//  "  -target www.google.com -d 128 -icmp -c 20 -traceroute"
+//  "  -target www.google.com -d 128 -icmp -c 15 -traceroute"
 func TestTraceRouteIPv4Icmp(t *testing.T) {
 	if opt.IPv6 {
 		t.Skip("skipping test in ipv6 mode.")
 	}
 
 	ips, _ := getTargetIPs("google.com", opt.IPv6)
-	opt.BaseSourcePort = 5432
+	opt.BaseSourcePort = 1234
 	opt.Icmp = true
-	opt.Count = 20 // 20 packets
+	opt.Count = 15 // 15 packets
 	opt.Data = 128 // data payload size
 	opt.TraceRoute = true
 	ctx, cancel := context.WithCancel(context.Background())
 
 	expectedStrs := []string{
 		"hop=1 TimeExceeded(TTLExceeded)",
-		"20 packets tramitted, 20 packets received",
+		"] EchoReply  rtt=",
+		"15 packets tramitted,",
 	}
 	go expectStdoutContains(t, ctx, expectedStrs...)
 
@@ -181,10 +182,10 @@ func TestTraceRouteIPv4Icmp(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 }
 
-// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Icmp
+// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Udp
 //  "  -d 128 -udp -p +1234 -traceroute -c 10 -ttl 4 --keepttl"
 func TestTraceRouteIPv4Udp(t *testing.T) {
 	if opt.IPv6 {
@@ -221,7 +222,7 @@ func TestTraceRouteIPv4Udp(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 }
 
 func TestMain(m *testing.M) {

@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func LogUDPReply(packet gopacket.Packet, key string) {
+func logUDPReply(packet gopacket.Packet, key string) {
 	fmt.Fprintf(os.Stdout, "[%v] got UDP reply\n", key)
 	log.V(2).Infof("%v", packet)
 }
@@ -43,7 +43,7 @@ func (s *udpStream) maybeFinish() {
 }
 
 // udpStreamFactory implements reassembly.StreamFactory
-// It also implement streamProtocolLayer interface
+// It also implement StreamProtocolLayer interface
 type udpStreamFactory struct {
 	ctx     context.Context
 	streams map[key]*udpStream
@@ -123,7 +123,7 @@ func (f *udpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *udpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
+func (f *udpStreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	// Prepare for next call, this makes udpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -160,7 +160,7 @@ func (f *udpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer)
 	return []gopacket.Layer{udp}
 }
 
-func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
+func (f *udpStreamFactory) OnSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
@@ -197,7 +197,7 @@ func (f *udpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
+func (f *udpStreamFactory) OnReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -233,10 +233,10 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 								if !f.cmdOpts.TraceRouteKeepTTL {
 									ttl -= 1
 								}
-								LogTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
+								logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
 								// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 							} else {
-								LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
+								logICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
 
 						} else {
@@ -271,9 +271,9 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 								if !f.cmdOpts.TraceRouteKeepTTL {
 									ttl -= 1
 								}
-								LogTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
+								logTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
 							} else {
-								LogICMPv6(typeCode, kEgress.String(), s.ciEgress, packet)
+								logICMPv6(typeCode, kEgress.String(), s.ciEgress, packet)
 							}
 
 						} else {
@@ -305,7 +305,7 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 		kEgress := key{kIngress.net.Reverse(), kIngress.transport.Reverse()}
 		s = f.streams[kEgress]
 		if s != nil {
-			LogUDPReply(packet, kEgress.String())
+			logUDPReply(packet, kEgress.String())
 		} else {
 			log.V(5).Infof("[%s] not found", kEgress)
 		}
@@ -329,13 +329,13 @@ func (f *udpStreamFactory) onReceive(packet gopacket.Packet) {
 	}
 }
 
-func (f *udpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
+func (f *udpStreamFactory) SetLocalEnpoint(endpoint gopacket.Endpoint) {
 	f.localEnpoint = endpoint
 }
 
-// collectOldStreams finds any streams that haven't received a packet within
+// CollectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
-func (f *udpStreamFactory) collectOldStreams(timeout time.Duration) {
+func (f *udpStreamFactory) CollectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -363,7 +363,7 @@ func (f *udpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo
 	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
-func (f *udpStreamFactory) showStats() {
+func (f *udpStreamFactory) ShowStats() {
 	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
 	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)

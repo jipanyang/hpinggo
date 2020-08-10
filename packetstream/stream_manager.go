@@ -31,20 +31,20 @@ const (
 // Interface for protocol layer stream processing.
 // Assuming the protocol runs above IP layer immediately,
 // Could be TransportLayer protocols lik TCP/UDP or control protocols like ICMPv4/ICMPv6
-type streamProtocolLayer interface {
+type StreamProtocolLayer interface {
 	// Prepare protocol layer before it could be serialized to wire format
-	prepareProtocalLayers(gopacket.NetworkLayer) []gopacket.Layer
+	PrepareProtocalLayers(gopacket.NetworkLayer) []gopacket.Layer
 	// Post processing after the packet is sent.
-	onSend(gopacket.NetworkLayer, []gopacket.Layer, []byte)
+	OnSend(gopacket.NetworkLayer, []gopacket.Layer, []byte)
 	// Post processing after a packet is received.
-	onReceive(gopacket.Packet)
+	OnReceive(gopacket.Packet)
 
 	// Inform trasport layer of its local end point for checking flow direction.
-	setLocalEnpoint(gopacket.Endpoint)
+	SetLocalEnpoint(gopacket.Endpoint)
 
-	collectOldStreams(time.Duration)
+	CollectOldStreams(time.Duration)
 
-	showStats()
+	ShowStats()
 }
 
 // key is used to identify a TCP session with c2s info.
@@ -116,6 +116,12 @@ func getRandomIPv6(randIP string) net.IP {
 	return net.ParseIP(ipStr)
 }
 
+// TODO: move some options from NewPacketStreamMgmr to here
+type PacketStreamMgmr interface {
+	StartStream() error
+	Close()
+}
+
 type packetStreamMgmr struct {
 	ctx context.Context
 	// iface is the interface to send packets on.
@@ -133,7 +139,7 @@ type packetStreamMgmr struct {
 	packetOpts gopacket.SerializeOptions
 	buf        gopacket.SerializeBuffer
 
-	streamFactory streamProtocolLayer
+	streamFactory StreamProtocolLayer
 
 	// options specified at user command line
 	cmdOpts options.Options
@@ -221,7 +227,7 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, opt options.Options)
 		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n",
 			opt.RandDest, m.iface.Name, m.src)
 	}
-	m.streamFactory.setLocalEnpoint(layers.NewIPEndpoint(m.src))
+	m.streamFactory.SetLocalEnpoint(layers.NewIPEndpoint(m.src))
 	m.open_pcap()
 
 	return m, nil
@@ -327,11 +333,11 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 	for {
 		select {
 		case packet := <-in:
-			m.streamFactory.onReceive(packet)
+			m.streamFactory.OnReceive(packet)
 		case <-ticker:
 			// flush connections that haven't seen activity in the past timeout duration.
 			log.V(1).Infof("---- FLUSHING ----")
-			m.streamFactory.collectOldStreams(timeout)
+			m.streamFactory.CollectOldStreams(timeout)
 
 		case <-stop:
 			return
@@ -352,9 +358,9 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 		}
 	}
 
-	defer m.streamFactory.showStats()
+	defer m.streamFactory.ShowStats()
 	for {
-		protoLayers := m.streamFactory.prepareProtocalLayers(netLayer)
+		protoLayers := m.streamFactory.PrepareProtocalLayers(netLayer)
 		switch v := netLayer.(type) {
 		case *layers.IPv4:
 			if m.cmdOpts.RandDest != "" {
@@ -378,7 +384,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 				// if err := m.rawSockSend(v, t.(gopacket.SerializableLayer), gopacket.Payload(payload)); err != nil {
 				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), protoLayers, err)
 			} else {
-				m.streamFactory.onSend(v, protoLayers, payload)
+				m.streamFactory.OnSend(v, protoLayers, payload)
 			}
 
 		case *layers.IPv6:
@@ -403,7 +409,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 			if err := m.rawSockSend(l...); err != nil {
 				log.Errorf("error raw socket sending %v, %v: %v", v.NetworkFlow(), protoLayers, err)
 			} else {
-				m.streamFactory.onSend(v, protoLayers, payload)
+				m.streamFactory.OnSend(v, protoLayers, payload)
 			}
 
 		default:

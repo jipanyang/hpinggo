@@ -19,14 +19,14 @@ import (
 // Not supporting stream matching for other ICMP messages like
 //   ICMPv6NeighborSolicitation /ICMPv6NeighborAdvertisement
 
-func LogICMPv6(typeCode layers.ICMPv6TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
+func logICMPv6(typeCode layers.ICMPv6TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
 
 	fmt.Fprintf(os.Stdout, "[%v] %v  rtt=%v\n", key, typeCode.String(), delay)
 	log.V(2).Infof("%v", packet)
 }
 
-func LogTraceRouteIPv6(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv6TypeCode, packet gopacket.Packet) {
+func logTraceRouteIPv6(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv6TypeCode, packet gopacket.Packet) {
 	netflow := packet.NetworkLayer().NetworkFlow()
 	ipv6 := packet.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 	name, _ := net.LookupAddr(ipv6.SrcIP.String())
@@ -76,7 +76,7 @@ func (s *icmpv6Stream) maybeFinish() {
 }
 
 // icmpv6StreamFactory implements reassembly.StreamFactory
-// It also implement streamProtocolLayer interface
+// It also implement StreamProtocolLayer interface
 type icmpv6StreamFactory struct {
 	ctx     context.Context
 	streams map[icmpv6Key]*icmpv6Stream
@@ -134,7 +134,7 @@ func (f *icmpv6StreamFactory) parseOptions() {
 }
 
 // Prepare ICMPv6 layers
-func (f *icmpv6StreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
+func (f *icmpv6StreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	f.seq++
 
 	icmpv6 := &layers.ICMPv6{
@@ -164,7 +164,7 @@ func (f *icmpv6StreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLay
 	}
 }
 
-func (f *icmpv6StreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []gopacket.Layer, payload []byte) {
+func (f *icmpv6StreamFactory) OnSend(netLayer gopacket.NetworkLayer, icmpLayers []gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
@@ -204,7 +204,7 @@ func (f *icmpv6StreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers 
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *icmpv6StreamFactory) onReceive(packet gopacket.Packet) {
+func (f *icmpv6StreamFactory) OnReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -257,7 +257,7 @@ func (f *icmpv6StreamFactory) onReceive(packet gopacket.Packet) {
 							if !f.cmdOpts.TraceRouteKeepTTL {
 								ttl -= 1
 							}
-							LogTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
+							logTraceRouteIPv6(ttl, s.ciEgress, typeCode, packet)
 							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 						}
 					}
@@ -281,7 +281,7 @@ func (f *icmpv6StreamFactory) onReceive(packet gopacket.Packet) {
 		kIngress := icmpv6Key{netflow, kEgress.id, kEgress.seq}
 		// Don't duplicate with traceroute print
 		if typeCode.Type() == layers.ICMPv6TypeEchoReply {
-			LogICMPv6(typeCode, kIngress.String(), s.ciEgress, packet)
+			logICMPv6(typeCode, kIngress.String(), s.ciEgress, packet)
 		}
 		s.done = true
 		s.maybeFinish()
@@ -289,13 +289,13 @@ func (f *icmpv6StreamFactory) onReceive(packet gopacket.Packet) {
 	}
 }
 
-func (f *icmpv6StreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
+func (f *icmpv6StreamFactory) SetLocalEnpoint(endpoint gopacket.Endpoint) {
 	f.localEnpoint = endpoint
 }
 
-// collectOldStreams finds any streams that haven't received a packet within
+// CollectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
-func (f *icmpv6StreamFactory) collectOldStreams(timeout time.Duration) {
+func (f *icmpv6StreamFactory) CollectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -323,7 +323,7 @@ func (f *icmpv6StreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureI
 	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
-func (f *icmpv6StreamFactory) showStats() {
+func (f *icmpv6StreamFactory) ShowStats() {
 	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
 	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)

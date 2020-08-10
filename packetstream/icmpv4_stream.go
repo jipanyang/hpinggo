@@ -21,14 +21,14 @@ import (
 //   ICMPv4TypeAddressMaskRequest/Reply
 // Not supporting stream matching for other ICMP messages like ICMPv4TypeDestinationUnreachable/ICMPv4TypeRedirect
 
-func LogICMPv4(typeCode layers.ICMPv4TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
+func logICMPv4(typeCode layers.ICMPv4TypeCode, key string, ciEgress *gopacket.CaptureInfo, packet gopacket.Packet) {
 	delay := packet.Metadata().CaptureInfo.Timestamp.Sub(ciEgress.Timestamp)
 
 	fmt.Fprintf(os.Stdout, "[%v] %v  rtt=%v\n", key, typeCode.String(), delay)
 	log.V(2).Infof("%v", packet)
 }
 
-func LogTraceRouteIPv4(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
+func logTraceRouteIPv4(ttl uint8, ciEgress *gopacket.CaptureInfo, typeCode layers.ICMPv4TypeCode, packet gopacket.Packet) {
 	netflow := packet.NetworkLayer().NetworkFlow()
 	ipv4 := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 	name, _ := net.LookupAddr(ipv4.SrcIP.String())
@@ -77,7 +77,7 @@ func (s *icmpStream) maybeFinish() {
 }
 
 // icmpStreamFactory implements reassembly.StreamFactory
-// It also implement streamProtocolLayer interface
+// It also implement StreamProtocolLayer interface
 type icmpStreamFactory struct {
 	ctx     context.Context
 	streams map[icmpKey]*icmpStream
@@ -138,7 +138,7 @@ func (f *icmpStreamFactory) parseOptions() {
 }
 
 // gopacket classify icmpv4/icmpv6 as LayerClassIPControl
-func (f *icmpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
+func (f *icmpStreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	f.seq++
 
 	// TODO: populating the whole udp layer every time, improve it?
@@ -162,7 +162,7 @@ func (f *icmpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer
 	return []gopacket.Layer{icmp}
 }
 
-func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []gopacket.Layer, payload []byte) {
+func (f *icmpStreamFactory) OnSend(netLayer gopacket.NetworkLayer, icmpLayers []gopacket.Layer, payload []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
@@ -199,7 +199,7 @@ func (f *icmpStreamFactory) onSend(netLayer gopacket.NetworkLayer, icmpLayers []
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
+func (f *icmpStreamFactory) OnReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -243,7 +243,7 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 							if !f.cmdOpts.TraceRouteKeepTTL {
 								ttl -= 1
 							}
-							LogTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
+							logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
 							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
 						}
 					}
@@ -266,7 +266,7 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 		kIngress := icmpKey{netflow, icmp.Id, icmp.Seq}
 		if typeCode.Type() != layers.ICMPv4TypeDestinationUnreachable &&
 			typeCode.Type() != layers.ICMPv4TypeTimeExceeded {
-			LogICMPv4(icmp.TypeCode, kIngress.String(), s.ciEgress, packet)
+			logICMPv4(icmp.TypeCode, kIngress.String(), s.ciEgress, packet)
 		}
 		s.done = true
 		s.maybeFinish()
@@ -274,13 +274,13 @@ func (f *icmpStreamFactory) onReceive(packet gopacket.Packet) {
 	}
 }
 
-func (f *icmpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
+func (f *icmpStreamFactory) SetLocalEnpoint(endpoint gopacket.Endpoint) {
 	f.localEnpoint = endpoint
 }
 
-// collectOldStreams finds any streams that haven't received a packet within
+// CollectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
-func (f *icmpStreamFactory) collectOldStreams(timeout time.Duration) {
+func (f *icmpStreamFactory) CollectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -308,7 +308,7 @@ func (f *icmpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInf
 	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
-func (f *icmpStreamFactory) showStats() {
+func (f *icmpStreamFactory) ShowStats() {
 	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
 	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)

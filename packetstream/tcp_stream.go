@@ -15,7 +15,7 @@ import (
 )
 
 // tcpStreamFactory implements reassembly.StreamFactory
-// It also implement streamProtocolLayer interface
+// It also implement StreamProtocolLayer interface
 type tcpStreamFactory struct {
 	ctx       context.Context
 	streams   map[key]*tcpStream
@@ -125,7 +125,7 @@ func (f *tcpStreamFactory) parseOptions() {
 	f.baseDestPort = uint16(port)
 }
 
-func (f *tcpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
+func (f *tcpStreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer) []gopacket.Layer {
 	// Prepare for next call, this makes tcpStreamFactory stateful
 	if f.forceIncDestPort {
 		f.dstPort = f.baseDestPort + uint16(f.sentPackets)
@@ -161,7 +161,7 @@ func (f *tcpStreamFactory) prepareProtocalLayers(netLayer gopacket.NetworkLayer)
 	return []gopacket.Layer{tcp}
 }
 
-func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
+func (f *tcpStreamFactory) OnSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
 	f.sentPackets += 1
 
 	// TODO: check length of slice
@@ -177,7 +177,7 @@ func (f *tcpStreamFactory) onSend(netLayer gopacket.NetworkLayer, transportLayer
 }
 
 // TODO: check sequence number of each packet sent or received.
-func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
+func (f *tcpStreamFactory) OnReceive(packet gopacket.Packet) {
 	log.V(7).Infof("%v", packet)
 
 	// Big lock for receive processing since we have no control over assembler internal processing.
@@ -209,7 +209,7 @@ func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 					s = f.streams[kEgress]
 					if s != nil {
 						// TODO: update updateStreamRecvStats?
-						LogICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
+						logICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
 					} else {
 						log.Infof(" %v timed out?", kEgress)
 					}
@@ -235,13 +235,13 @@ func (f *tcpStreamFactory) onReceive(packet gopacket.Packet) {
 	f.assembler.Assemble(packet.NetworkLayer().NetworkFlow(), tcp)
 }
 
-func (f *tcpStreamFactory) setLocalEnpoint(endpoint gopacket.Endpoint) {
+func (f *tcpStreamFactory) SetLocalEnpoint(endpoint gopacket.Endpoint) {
 	f.localEnpoint = endpoint
 }
 
-// collectOldStreams finds any streams that haven't received a packet within
+// CollectOldStreams finds any streams that haven't received a packet within
 // 'timeout'
-func (f *tcpStreamFactory) collectOldStreams(timeout time.Duration) {
+func (f *tcpStreamFactory) CollectOldStreams(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	// map iteration should be protected
 	f.mu.Lock()
@@ -272,7 +272,7 @@ func (f *tcpStreamFactory) updateStreamRecvStats(ciIngress *gopacket.CaptureInfo
 	f.rttAvg = (f.rttAvg*(f.recvCount-1) + delay) / f.recvCount
 }
 
-func (f *tcpStreamFactory) showStats() {
+func (f *tcpStreamFactory) ShowStats() {
 	fmt.Fprintf(os.Stdout, "\n--- hpinggo statistic ---\n")
 	fmt.Fprintf(os.Stdout, "%v packets tramitted, %v packets received\n",
 		f.sentPackets, f.recvCount)
