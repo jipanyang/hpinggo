@@ -12,7 +12,7 @@ import (
 	"github.com/jipanyang/hpinggo/scanner"
 )
 
-func expectStdoutContains(t *testing.T, ctx context.Context, expectedStr string) {
+func expectStdoutContains(t *testing.T, ctx context.Context, expectedStrs ...string) {
 	rescueStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -24,8 +24,10 @@ func expectStdoutContains(t *testing.T, ctx context.Context, expectedStr string)
 		out, _ := ioutil.ReadAll(r)
 		os.Stdout = rescueStdout
 
-		if !strings.Contains(string(out), expectedStr) {
-			t.Fatalf("found no expected string: %v in console capture:\n %v", expectedStr, string(out))
+		for _, expectedStr := range expectedStrs {
+			if !strings.Contains(string(out), expectedStr) {
+				t.Fatalf("found no expected string: %v in console capture:\n %v", expectedStr, string(out))
+			}
 		}
 	}
 }
@@ -34,7 +36,8 @@ func expectStdoutContains(t *testing.T, ctx context.Context, expectedStr string)
 
 // sudo /usr/local/go/bin/go test ./cmd -v
 // sudo /usr/local/go/bin/go test ./cmd -v -ipv6
-// TODO: add more comprehensive unit test and intergration test for the packages.
+
+// TODO: Test IPv6, traceroute
 // TODO: refactor scanner library, extract out utility functions.
 // TODO: pipe out scan result for the consumption of testing and automation
 
@@ -128,6 +131,84 @@ func TestStreamIPv4(t *testing.T) {
 
 	for idx, ip := range ips {
 		t.Logf("Streaming to %v ...\n", ips[idx])
+		s, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
+		if err != nil {
+			t.Fatalf("unable to create PacketStreamMgmr for %v: %v", ip, err)
+			continue
+		}
+		if err := s.StartStream(); err != nil {
+			t.Fatalf("unable to stream %v: %v", ip, err)
+		}
+		s.Close()
+	}
+
+	cancel()
+	time.Sleep(1 * time.Second)
+}
+
+// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Icmp
+//  "  -target www.google.com -d 128 -icmp -c 20 -traceroute"
+func TestTraceRouteIPv4Icmp(t *testing.T) {
+	if opt.IPv6 {
+		t.Skip("skipping test in ipv6 mode.")
+	}
+
+	ips, _ := getTargetIPs("google.com", opt.IPv6)
+	opt.BaseSourcePort = 5432
+	opt.Icmp = true
+	opt.Count = 20 // 20 packets
+	opt.Data = 128 // data payload size
+	opt.TraceRoute = true
+	ctx, cancel := context.WithCancel(context.Background())
+
+	expectedStrs := []string{
+		"hop=1 TimeExceeded(TTLExceeded)",
+		"20 packets tramitted, 20 packets received",
+	}
+	go expectStdoutContains(t, ctx, expectedStrs...)
+
+	for idx, ip := range ips {
+		t.Logf("traceroute to %v ...\n", ips[idx])
+		s, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
+		if err != nil {
+			t.Fatalf("unable to create PacketStreamMgmr for %v: %v", ip, err)
+			continue
+		}
+		if err := s.StartStream(); err != nil {
+			t.Fatalf("unable to stream %v: %v", ip, err)
+		}
+		s.Close()
+	}
+
+	cancel()
+	time.Sleep(1 * time.Second)
+}
+
+// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Icmp
+//  "  -d 128 -udp -p +1234 -traceroute -c 10 -ttl 4 --keepttl"
+func TestTraceRouteIPv4Udp(t *testing.T) {
+	if opt.IPv6 {
+		t.Skip("skipping test in ipv6 mode.")
+	}
+
+	ips, _ := getTargetIPs("google.com", opt.IPv6)
+	opt.DestPort = "1234"
+	opt.Udp = true
+	opt.Count = 10 // 10 packets
+	opt.Data = 128 // data payload size
+	opt.TraceRoute = true
+	opt.TTL = 4
+	opt.TraceRouteKeepTTL = true
+	ctx, cancel := context.WithCancel(context.Background())
+
+	expectedStrs := []string{
+		"hop=4 TimeExceeded(TTLExceeded)",
+		"10 packets tramitted, 10 packets received",
+	}
+	go expectStdoutContains(t, ctx, expectedStrs...)
+
+	for idx, ip := range ips {
+		t.Logf("traceroute to %v ...\n", ips[idx])
 		s, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
 		if err != nil {
 			t.Fatalf("unable to create PacketStreamMgmr for %v: %v", ip, err)
