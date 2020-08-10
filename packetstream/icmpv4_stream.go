@@ -153,6 +153,7 @@ func (f *icmpStreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer
 	case *layers.IPv4:
 		v.Protocol = layers.IPProtocolICMPv4
 		v.TTL = f.srcTTL
+		log.V(5).Infof("f.srcTTL: %v", f.srcTTL)
 	// case *layers.IPv6:
 	// 	v.NextHeader = layers.IPProtocolICMPv6
 	default:
@@ -166,6 +167,8 @@ func (f *icmpStreamFactory) OnSend(netLayer gopacket.NetworkLayer, icmpLayers []
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sentPackets += 1
+	// For traceroute, assuming the previoud reply accepted.
+	// TODO: increment srcTTL upon reply confirmation.
 	if !f.cmdOpts.TraceRouteKeepTTL {
 		f.srcTTL++
 	}

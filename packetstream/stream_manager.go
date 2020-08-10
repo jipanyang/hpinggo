@@ -47,8 +47,7 @@ type StreamProtocolLayer interface {
 }
 
 // key is used to identify a TCP session with c2s info.
-// should be applicable to TCP/UDP and other types of stream
-// TODO: how about icmp which doesn't have endpoint type, maybe add extra field in key struct?
+// Applicable to TCP/UDP stream
 type key struct {
 	net, transport gopacket.Flow
 }
@@ -77,7 +76,8 @@ func randIpSanityCheck(ipStr string, isIPv6 bool) bool {
 
 // Get one random IPv4 IP based on the string pattern
 // Ex.  x.x.x.x 192.168.1.x,  192.x.1.1
-func getRandomIPv4(randIP string) net.IP {
+func getRandomIPv4(randIP string) (ip net.IP) {
+	randIP = strings.TrimSpace(randIP)
 	octets := strings.Split(randIP, ".")
 	ipStr := ""
 	for _, octet := range octets {
@@ -89,10 +89,13 @@ func getRandomIPv4(randIP string) net.IP {
 	}
 	last := len(ipStr) - 1
 	ipStr = ipStr[:last]
-	return net.ParseIP(ipStr)
+	ip = net.ParseIP(ipStr)
+	log.V(2).Infof("Got random IP %s: %v\n", ipStr, ip)
+	return
 }
 
-func getRandomIPv6(randIP string) net.IP {
+func getRandomIPv6(randIP string) (ip net.IP) {
+	randIP = strings.TrimSpace(randIP)
 	halves := strings.Split(randIP, "::")
 	ipStr := ""
 	for _, half := range halves {
@@ -112,7 +115,8 @@ func getRandomIPv6(randIP string) net.IP {
 	}
 	last := len(ipStr) - 2
 	ipStr = ipStr[:last]
-	return net.ParseIP(ipStr)
+	log.V(2).Infof("Got random IP %s: %v\n", ipStr, ip)
+	return
 }
 
 // TODO: move some options from NewPacketStreamMgmr to here
@@ -189,7 +193,7 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, opt options.Options)
 		if err != nil {
 			return nil, err
 		}
-		log.Infof("Streaming to destination %v with interface %v, gateway %v, src %v\n",
+		log.Infof("StreamMgmr for destination %v with interface %v, gateway %v, src %v\n",
 			dstIp, iface.Name, gw, src)
 		m.gw, m.src, m.iface = gw, src, iface
 	} else {
@@ -223,7 +227,7 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, opt options.Options)
 				break
 			}
 		}
-		log.V(1).Infof("  Streaming to destination %v with interface %v, src %v\n",
+		log.Infof("StreamMgmr for destination %v with interface %v, src %v\n",
 			opt.RandDest, m.iface.Name, m.src)
 	}
 	m.streamFactory.SetLocalEnpoint(layers.NewIPEndpoint(m.src))
@@ -369,7 +373,8 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 			if m.cmdOpts.RandDest != "" {
 				v.DstIP = getRandomIPv4(m.cmdOpts.RandDest)
 				if v.DstIP == nil {
-					panic("Failed to get random IP")
+					msg := fmt.Sprintf("Failed to get random IP from %v", m.cmdOpts.RandDest)
+					panic(msg)
 				}
 			}
 			if m.cmdOpts.RandSource != "" {
