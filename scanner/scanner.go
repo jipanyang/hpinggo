@@ -243,6 +243,13 @@ func (s *scanner) open_pcap() {
 func (s *scanner) sender(tcp *layers.TCP) {
 	retry := 0
 	interval := s.cmdOpts.Interval
+	var payload []byte
+	if s.cmdOpts.Data > 0 {
+		payload = make([]byte, s.cmdOpts.Data)
+		for i := range payload {
+			payload[i] = 0xfe
+		}
+	}
 
 	for {
 		retry++
@@ -257,8 +264,6 @@ func (s *scanner) sender(tcp *layers.TCP) {
 				s.portScan[port].retry--
 				tcp.DstPort = layers.TCPPort(port)
 				s.portScan[port].sendTime = time.Now()
-				// TODO: fill payload as requested
-				var payload []byte
 				if err := s.packetSender.send([]gopacket.Layer{tcp}, payload); err != nil {
 					log.Errorf("error sending to port %v: %v", tcp.DstPort, err)
 				}
