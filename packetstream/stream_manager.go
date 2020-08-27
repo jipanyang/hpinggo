@@ -140,7 +140,10 @@ type packetStreamMgmr struct {
 	// opts and buf allow us to easily serialize packets in the send()
 	// method.
 	packetOpts gopacket.SerializeOptions
-	buf        gopacket.SerializeBuffer
+	// Have two buf ready for populating IP/IPv6 header and payload separately
+	// We may need to fragment payload if it is over interface mtu or -f --frag is set
+	headerBuf  gopacket.SerializeBuffer
+	payloadBuf gopacket.SerializeBuffer
 
 	streamFactory StreamProtocolLayer
 
@@ -156,8 +159,9 @@ func NewPacketStreamMgmr(ctx context.Context, dstIp net.IP, opt options.Options)
 			FixLengths:       true,
 			ComputeChecksums: true,
 		},
-		buf:     gopacket.NewSerializeBuffer(),
-		cmdOpts: opt,
+		headerBuf:  gopacket.NewSerializeBuffer(),
+		payloadBuf: gopacket.NewSerializeBuffer(),
+		cmdOpts:    opt,
 	}
 
 	var err error
@@ -286,12 +290,35 @@ func (m *packetStreamMgmr) open_pcap() {
 
 // Raw socket send
 func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
-	if err := gopacket.SerializeLayers(m.buf, m.packetOpts, l...); err != nil {
+	// Assumeing it always starts with IP or IPv6 layer
+	// TODO: sanity check.
+	if err := gopacket.SerializeLayers(m.headerBuf, m.packetOpts, l[0]); err != nil {
 		return err
 	}
-	packetData := m.buf.Bytes()
-	// p := gopacket.NewPacket(packetData, layers.LayerTypeIPv6, gopacket.Default)
-	// log.V(5).Infof("NewPacket: [%v]", p)
+	if err := gopacket.SerializeLayers(m.payloadBuf, m.packetOpts, l[1:]...); err != nil {
+		return err
+	}
+	packetData := m.payloadBuf.Bytes()
+	packetHeader := m.headerBuf.Bytes()
+	// Under IPv4, a router that receives a network packet larger than the next hop's MTU has two options:
+	// drop the packet if the Don't Fragment (DF) flag bit is set in the packet's header and
+	// send an Internet Control Message Protocol (ICMP) message which indicates the condition
+	// Fragmentation Needed (Type 3, Code 4), or fragment the packet and send it over the link with a smaller MTU.
+	//
+	// Although originators may produce fragmented packets, IPv6 routers do not have the option to fragment further.
+	// Instead, network equipment is required to deliver any IPv6 packets or packet fragments smaller than or equal
+	// to 1280 bytes and IPv6 hosts are required to determine the optimal MTU through Path MTU Discovery before
+	// sending packets.
+	length := len(packetData) + len(packetHeader)
+	if length > m.iface.MTU {
+		// TODO: frament the payload and set IP header fragment flag and fragment offset accordingly
+		if m.cmdOpts.IPv6 {
+			return fmt.Errorf("Data packet size %is over inteface MTU: %+v\n", length, *m.iface)
+		} else {
+			return fmt.Errorf("TO support IPv4 fragmentation, Data packet size %is over inteface MTU: %+v\n",
+				length, *m.iface)
+		}
+	}
 
 	var ip net.IP
 	switch v := l[0].(type) {
@@ -308,7 +335,7 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 			Port: 0,
 			Addr: dstIp,
 		}
-		err := syscall.Sendto(m.socketFd, packetData, 0, &addr)
+		err := syscall.Sendto(m.socketFd, append(packetHeader, packetData...), 0, &addr)
 		if err != nil {
 			log.Fatal("Sendto:", err)
 		}
@@ -320,7 +347,7 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 			Port: 0,
 			Addr: dstIp,
 		}
-		err := syscall.Sendto(m.socketFd, packetData, 0, &addr)
+		err := syscall.Sendto(m.socketFd, append(packetHeader, packetData...), 0, &addr)
 		if err != nil {
 			log.Fatal("Sendto:", err)
 		}
@@ -384,6 +411,7 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 				}
 			}
 			l := []gopacket.SerializableLayer{v}
+			// layers above IP, ex. TCP/UDP/ICMPv4/(IPProtocolICMPv6/ICMPv6Echo)
 			for _, p := range protoLayers {
 				l = append(l, p.(gopacket.SerializableLayer))
 			}
