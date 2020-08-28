@@ -29,9 +29,8 @@ type Options struct {
 	RandSource string // Enables the random source mode
 	//Using this option you can set TTL (time to live) of outgoing packets,
 	// it's likely that you will use this with -traceroute or --bind options.
-	TTL int //time to live
-
-	// Common Options
+	TTL  int //time to live
+	Id   int // Set ip->id field. Default id is random but if fragmentation is turned on and id isn't specified it will be getpid() & 0xFFFF
 	Data int // payload data size
 
 	TraceRoute        bool // Run in trace route mode

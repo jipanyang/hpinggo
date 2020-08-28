@@ -73,6 +73,7 @@ const (
 	DEFAULT_COUNT            = -1  /* default packets count: -1 means forever */
 	DEFAULT_DATA_SIZE        = 0   /* default packets data size for applicaction payload*/
 	DEFAULT_TTL              = -1  /* Application decides TTL or hoplimit*/
+	DEFAULT_ID               = -1  /*ip->id field*/
 	DEFAULT_SRCWINSIZE       = 512 /* default tcp windows size */
 	DEFAULT_VIRTUAL_MTU      = 16  /* tiny fragments */
 	DEFAULT_ICMP_TYPE        = 8   /* echo request */
@@ -102,6 +103,7 @@ func init() {
 	flag.StringVar(&opt.RandSource, "rand-source", "", "Enables the random source mode,  x.x.x.x, 192,168.x.x, 128.x.x.255")
 	flag.IntVar(&opt.Data, "data", DEFAULT_DATA_SIZE, "Set packet body size")
 	flag.IntVar(&opt.TTL, "ttl", DEFAULT_TTL, "Set TTL (time to live) of outgoing packets")
+	flag.IntVar(&opt.Id, "id", DEFAULT_ID, "Set ip header id field of outgoing packets")
 	flag.BoolVar(&opt.IPv6, "ipv6", false, "When set, hpinggo runs in ipv6 mode")
 	flag.StringVar(&opt.Interface, "interface", "", "Interface to be used.")
 	flag.StringVar(&opt.Scan, "scan", "", "Scan mode, groups of ports to scan. ex. 1-1000,8888")

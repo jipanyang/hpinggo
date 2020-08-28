@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,6 +20,8 @@ import (
 	"github.com/google/gopacket/routing"
 	"github.com/jipanyang/hpinggo/options"
 	"github.com/jipanyang/hpinggo/utilities"
+
+	"encoding/hex"
 )
 
 const (
@@ -300,6 +303,11 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 	}
 	packetData := m.payloadBuf.Bytes()
 	packetHeader := m.headerBuf.Bytes()
+
+	// Get virtual mtu and make it 8 bytes aligned
+	virtualMtu := m.iface.MTU - len(packetHeader)
+	virtualMtu -= virtualMtu % 8
+
 	// Under IPv4, a router that receives a network packet larger than the next hop's MTU has two options:
 	// drop the packet if the Don't Fragment (DF) flag bit is set in the packet's header and
 	// send an Internet Control Message Protocol (ICMP) message which indicates the condition
@@ -314,10 +322,9 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 		// TODO: frament the payload and set IP header fragment flag and fragment offset accordingly
 		if m.cmdOpts.IPv6 {
 			return fmt.Errorf("Data packet size %is over inteface MTU: %+v\n", length, *m.iface)
-		} else {
-			return fmt.Errorf("TO support IPv4 fragmentation, Data packet size %is over inteface MTU: %+v\n",
-				length, *m.iface)
 		}
+		// return fmt.Errorf("TO support IPv4 fragmentation, Data packet size %is over inteface MTU: %+v\n",
+		// 	length, *m.iface)
 	}
 
 	var ip net.IP
@@ -335,9 +342,42 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 			Port: 0,
 			Addr: dstIp,
 		}
-		err := syscall.Sendto(m.socketFd, append(packetHeader, packetData...), 0, &addr)
-		if err != nil {
-			log.Fatal("Sendto:", err)
+		fragOffset := 0
+		ip := l[0].(*layers.IPv4)
+		for len(packetData)-fragOffset > virtualMtu {
+			log.V(1).Infof("IP fragmentation, total: %v, frag offset: %v, mtu: %v",
+				len(packetData), fragOffset, virtualMtu)
+
+			ip.Flags = layers.IPv4MoreFragments
+			ip.FragOffset = uint16(fragOffset) >> 3
+			if err := gopacket.SerializeLayers(m.headerBuf, m.packetOpts, ip); err != nil {
+				return err
+			}
+			log.V(1).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
+			err := syscall.Sendto(m.socketFd,
+				append(m.headerBuf.Bytes(), packetData[fragOffset:fragOffset+virtualMtu]...), 0, &addr)
+			if err != nil {
+				log.Fatal("Sendto:", err)
+			}
+
+			fragOffset += virtualMtu
+		}
+		if fragOffset < len(packetData) {
+			if fragOffset > 0 {
+				log.V(1).Infof("IP fragmentation, total: %v, frag offset: %v, mtu: %v",
+					len(packetData), fragOffset, virtualMtu)
+			}
+			ip.Flags = 0
+			ip.FragOffset = uint16(fragOffset) >> 3
+			if err := gopacket.SerializeLayers(m.headerBuf, m.packetOpts, ip); err != nil {
+				return err
+			}
+			log.V(1).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
+			err := syscall.Sendto(m.socketFd,
+				append(m.headerBuf.Bytes(), packetData[fragOffset:]...), 0, &addr)
+			if err != nil {
+				log.Fatal("Sendto:", err)
+			}
 		}
 	} else {
 		var dstIp [16]byte
@@ -371,7 +411,7 @@ func (m *packetStreamMgmr) waitPackets(stop chan struct{}) {
 
 		case <-stop:
 			log.Warningf("Asked to stop\n")
-			log.Infof("streamFactory:%T %+v\n", m.streamFactory, m.streamFactory)
+			log.V(2).Infof("streamFactory:%T %+v\n", m.streamFactory, m.streamFactory)
 			return
 		}
 	}
@@ -393,6 +433,12 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 	defer m.streamFactory.ShowStats()
 	defer log.Flush()
 	log.Infof("streamFactory:%T %+v\n", m.streamFactory, m.streamFactory)
+	// For IPv4 ip->id  TODO: ipv6 flow label
+	id := uint16(m.cmdOpts.Id)
+	if m.cmdOpts.Id == -1 {
+		id = uint16(os.Getppid())
+	}
+
 	for {
 		protoLayers := m.streamFactory.PrepareProtocalLayers(netLayer)
 		switch v := netLayer.(type) {
@@ -410,6 +456,13 @@ func (m *packetStreamMgmr) sendPackets(netLayer gopacket.NetworkLayer) error {
 					panic("Failed to get random IP")
 				}
 			}
+			// Avoid 0 ID
+			if id == 0 {
+				id += 1
+			}
+			v.Id = id
+			id += 1
+			log.V(2).Infof("netlayer: %+v\n", v)
 			l := []gopacket.SerializableLayer{v}
 			// layers above IP, ex. TCP/UDP/ICMPv4/(IPProtocolICMPv6/ICMPv6Echo)
 			for _, p := range protoLayers {

@@ -3,14 +3,15 @@ package packetstream
 import (
 	"context"
 	"fmt"
-	log "github.com/golang/glog"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/jipanyang/hpinggo/options"
 	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	log "github.com/golang/glog"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/jipanyang/hpinggo/options"
 )
 
 func logUDPReply(packet gopacket.Packet, key string) {
@@ -223,31 +224,61 @@ func (f *udpStreamFactory) OnReceive(packet gopacket.Packet) {
 				typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
 				payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
 				if ok {
-					p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
-					if p.TransportLayer() != nil && p.TransportLayer().LayerType() == layers.LayerTypeUDP {
-						kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
-						s = f.streams[kEgress]
-						if s != nil {
-							if f.cmdOpts.TraceRoute {
-								ttl := f.srcTTL
-								if !f.cmdOpts.TraceRouteKeepTTL {
-									ttl -= 1
-								}
-								logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
-								// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
-							} else {
-								logICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
-							}
-
-						} else {
-							log.Infof(" %v timed out?", kEgress)
-						}
+					option := gopacket.DecodeOptions{
+						Lazy: true,
 					}
+					// the payload in icmp packet may be trunceted
+					p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, option)
+					// var net, transport gopacket.Flow
+					var egressFlowKey key
+					if p.NetworkLayer() != nil {
+						netlayer := p.NetworkLayer()
+						egressFlowKey.net = netlayer.NetworkFlow()
+						if p.TransportLayer() != nil {
+							egressFlowKey.transport = p.TransportLayer().TransportFlow()
+						} else {
+							// Try to parse the udp header ourselves here
+							// TODO: sanity check of length
+							if v, ok := netlayer.(*layers.IPv4); ok && v.Protocol == layers.IPProtocolUDP {
+								ls := p.Layers()
+								data := ls[1].LayerContents()
+								// source port and dst port
+								egressFlowKey.transport = gopacket.NewFlow(layers.EndpointUDPPort, data[0:2], data[2:4])
+							} else {
+								log.V(2).Infof("found no transport layer : %+v", p)
+							}
+						}
+					} else {
+						log.V(2).Infof("found no network layer : %+v", p)
+					}
+
+					log.V(2).Infof("ICMP payload egress key : %+v", egressFlowKey)
+					s = f.streams[egressFlowKey]
+					if s != nil {
+						if f.cmdOpts.TraceRoute {
+							ttl := f.srcTTL
+							if !f.cmdOpts.TraceRouteKeepTTL {
+								ttl -= 1
+							}
+							logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
+							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, egressFlowKey)
+						} else {
+							logICMPv4(typeCode, egressFlowKey.String(), s.ciEgress, packet)
+						}
+
+					} else {
+						log.V(1).Infof("no matching for %v. Timed out?", egressFlowKey)
+					}
+
+				} else {
+					log.V(1).Infof("No payload in icmp : %+v", icmp)
 				}
+			} else {
+				log.V(1).Infof("Unusable icmp typeCode: %+v", icmp.TypeCode)
 			}
 			// This is an ICMP message but no matching udp content found there.
 			if s == nil {
-				log.Infof("Unusable packet: %v", packet)
+				log.V(5).Infof("Unusable packet: %v", packet)
 				return
 			}
 		}

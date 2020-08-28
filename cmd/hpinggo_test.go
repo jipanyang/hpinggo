@@ -251,6 +251,46 @@ func TestTraceRouteIPv4Udp(t *testing.T) {
 	time.Sleep(2 * time.Second)
 }
 
+// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Udp
+//  "  -d 2000 -udp -p +1234 -traceroute -c 10 -ttl 4 --keepttl"
+func TestTraceRouteJumboIPv4Udp(t *testing.T) {
+	if opt.IPv6 {
+		t.Skip("skipping test in ipv6 mode.")
+	}
+	opt.Icmp = false
+	ips, _ := getTargetIPs("google.com", opt.IPv6)
+	opt.DestPort = "1234"
+	opt.Udp = true
+	opt.Count = 2   // 2 packets
+	opt.Data = 2000 // data payload size
+	opt.TraceRoute = true
+	opt.TTL = 4
+	opt.TraceRouteKeepTTL = true
+	ctx, cancel := context.WithCancel(context.Background())
+
+	expectedStrs := []string{
+		"hop=4 TimeExceeded(TTLExceeded)",
+		"2 packets tramitted, 2 packets received",
+	}
+	go expectStdoutContains(t, ctx, expectedStrs...)
+
+	for idx, ip := range ips {
+		t.Logf("traceroute to %v ...\n", ips[idx])
+		s, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
+		if err != nil {
+			t.Fatalf("unable to create PacketStreamMgmr for %v: %v", ip, err)
+			continue
+		}
+		if err := s.StartStream(); err != nil {
+			t.Fatalf("unable to stream %v: %v", ip, err)
+		}
+		s.Close()
+	}
+
+	cancel()
+	time.Sleep(2 * time.Second)
+}
+
 // sudo /usr/local/go/bin/go test -v ./cmd/ -run TestRandDestIPv4Tcp
 //  "    -log_dir /tmp/ -s 2000 -p ++20004 -S -c 4 -rand-dest gw"
 // Note, using gw as rand-dest which doesn't have any random section since
