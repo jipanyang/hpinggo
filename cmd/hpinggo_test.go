@@ -170,6 +170,41 @@ func TestStreamIPv4(t *testing.T) {
 	time.Sleep(1 * time.Second)
 }
 
+// sudo /usr/local/go/bin/go test -v ./cmd/ -run TestStreamJumboIPv4
+//  "-target scanme.com  -s 5432 -p ++79 -S -c 2 -d 3000"
+func TestStreamJumboIPv4(t *testing.T) {
+	if opt.IPv6 {
+		t.Skip("skipping test in ipv6 mode.")
+	}
+
+	ips, _ := getTargetIPs("scanme.nmap.org", opt.IPv6)
+	opt.BaseSourcePort = 5432
+	opt.DestPort = "++79"
+	opt.TcpSyn = true
+	opt.Count = 2   // 2 packets
+	opt.Data = 3000 // data payload size
+	opt.RawSocket = true
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go expectStdoutContains(t, ctx, "2 packets tramitted, 2 packets received")
+
+	for idx, ip := range ips {
+		t.Logf("Streaming to %v ...\n", ips[idx])
+		s, err := packetstream.NewPacketStreamMgmr(ctx, ip, opt)
+		if err != nil {
+			t.Fatalf("unable to create PacketStreamMgmr for %v: %v", ip, err)
+			continue
+		}
+		if err := s.StartStream(); err != nil {
+			t.Fatalf("unable to stream %v: %v", ip, err)
+		}
+		s.Close()
+	}
+
+	cancel()
+	time.Sleep(1 * time.Second)
+}
+
 // sudo /usr/local/go/bin/go test -v ./cmd/ -run TestTraceRouteIPv4Icmp
 //  "  -target www.google.com -d 128 -icmp -c 15 -traceroute"
 func TestTraceRouteIPv4Icmp(t *testing.T) {
