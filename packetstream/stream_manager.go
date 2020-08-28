@@ -353,7 +353,7 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 			if err := gopacket.SerializeLayers(m.headerBuf, m.packetOpts, ip); err != nil {
 				return err
 			}
-			log.V(1).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
+			log.V(5).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
 			err := syscall.Sendto(m.socketFd,
 				append(m.headerBuf.Bytes(), packetData[fragOffset:fragOffset+virtualMtu]...), 0, &addr)
 			if err != nil {
@@ -372,7 +372,7 @@ func (m *packetStreamMgmr) rawSockSend(l ...gopacket.SerializableLayer) error {
 			if err := gopacket.SerializeLayers(m.headerBuf, m.packetOpts, ip); err != nil {
 				return err
 			}
-			log.V(1).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
+			log.V(5).Infof("m.headerBuf.Bytes(): %s\n", hex.Dump(m.headerBuf.Bytes()))
 			err := syscall.Sendto(m.socketFd,
 				append(m.headerBuf.Bytes(), packetData[fragOffset:]...), 0, &addr)
 			if err != nil {

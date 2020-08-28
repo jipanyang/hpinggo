@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"encoding/hex"
 )
 
 // tcpStreamFactory implements reassembly.StreamFactory
@@ -41,6 +43,7 @@ type tcpStreamFactory struct {
 	// The dynamic port number which may be derived in real time
 	dstPort uint16
 	srcPort uint16
+	srcTTL  uint8 // TTL
 }
 
 // Create a new stream factory for tcp transport layer
@@ -66,6 +69,17 @@ func newTcpStreamFactory(ctx context.Context, opt options.Options) *tcpStreamFac
 	// packets in memory, or over 1000 for a single stream.
 	f.assembler.MaxBufferedPagesTotal = 100000
 	f.assembler.MaxBufferedPagesPerConnection = 1000
+
+	if opt.TTL > 0 {
+		f.srcTTL = uint8(opt.TTL)
+	} else if opt.TraceRoute {
+		f.srcTTL = 1
+	} else {
+		f.srcTTL = 64
+		if opt.IPv6 {
+			f.srcTTL = 255
+		}
+	}
 
 	return f
 }
@@ -158,12 +172,26 @@ func (f *tcpStreamFactory) PrepareProtocalLayers(netLayer gopacket.NetworkLayer)
 	tcp.SetNetworkLayerForChecksum(netLayer)
 	tcp.DstPort = layers.TCPPort(f.dstPort)
 	tcp.SrcPort = layers.TCPPort(f.srcPort)
+	log.V(5).Infof("tcp layer [%+v]", *tcp)
+
+	switch v := netLayer.(type) {
+	case *layers.IPv4:
+		v.Protocol = layers.IPProtocolTCP
+		v.TTL = f.srcTTL
+	case *layers.IPv6:
+		v.NextHeader = layers.IPProtocolTCP
+		v.HopLimit = f.srcTTL
+	default:
+		panic("Unsupported network layer value")
+	}
 	return []gopacket.Layer{tcp}
 }
 
 func (f *tcpStreamFactory) OnSend(netLayer gopacket.NetworkLayer, transportLayers []gopacket.Layer, payload []byte) {
 	f.sentPackets += 1
-
+	if !f.cmdOpts.TraceRouteKeepTTL {
+		f.srcTTL++
+	}
 	// TODO: check length of slice
 	transportLayer := transportLayers[0]
 	tcp := transportLayer.(*layers.TCP)
@@ -194,6 +222,8 @@ func (f *tcpStreamFactory) OnReceive(packet gopacket.Packet) {
 		log.V(5).Infof("Skip non-ingress packets: %v", packet)
 		return
 	}
+
+	// TODO: refactor ICMP error reply processing into common functions for TCP/UDP/ICMP
 	// Check ICMPv4 first
 	icmp, ok := packet.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
 	if ok {
@@ -203,16 +233,53 @@ func (f *tcpStreamFactory) OnReceive(packet gopacket.Packet) {
 			typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
 			payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
 			if ok {
-				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
-				if p.TransportLayer() != nil && p.TransportLayer().LayerType() == layers.LayerTypeTCP {
-					kEgress := key{p.NetworkLayer().NetworkFlow(), p.TransportLayer().TransportFlow()}
-					s = f.streams[kEgress]
-					if s != nil {
-						// TODO: update updateStreamRecvStats?
-						logICMPv4(typeCode, kEgress.String(), s.ciEgress, packet)
+				option := gopacket.DecodeOptions{
+					Lazy:   true,
+					NoCopy: true,
+				}
+				// the payload in icmp packet may be trunceted
+				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, option)
+				// var net, transport gopacket.Flow
+				var egressFlowKey key
+				if p.NetworkLayer() != nil {
+					netlayer := p.NetworkLayer()
+					egressFlowKey.net = netlayer.NetworkFlow()
+					// Try to parse the TCP header ourselves here
+					// TODO: sanity check of length
+					if v, ok := netlayer.(*layers.IPv4); ok && v.Protocol == layers.IPProtocolTCP {
+						data := []byte{}
+						if err := p.ErrorLayer(); err != nil {
+							log.V(2).Infof("Error decoding some part of the packet: %v", err)
+						}
+						// Get the offset to TCP header
+						offset := len(netlayer.LayerContents())
+						data = payload.LayerContents()[offset:]
+						log.V(2).Infof("TCP header data: %s\n", hex.Dump(data))
+						// source port and dst port
+						egressFlowKey.transport = gopacket.NewFlow(layers.EndpointTCPPort, data[0:2], data[2:4])
 					} else {
-						log.Infof(" %v timed out?", kEgress)
+						log.V(2).Infof("found no transport layer : %+v", p)
 					}
+					log.V(2).Infof("egressFlowKey: %+v ", egressFlowKey)
+				} else {
+					log.V(2).Infof("found no network layer : %+v", p)
+				}
+
+				s = f.streams[egressFlowKey]
+				if s != nil {
+					s.factory.updateStreamRecvStats(&gopacket.CaptureInfo{Timestamp: time.Now()}, s.ciEgress)
+					if f.cmdOpts.TraceRoute {
+						ttl := f.srcTTL
+						if !f.cmdOpts.TraceRouteKeepTTL {
+							ttl -= 1
+						}
+						logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
+						// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, egressFlowKey)
+					} else {
+						logICMPv4(typeCode, egressFlowKey.String(), s.ciEgress, packet)
+					}
+				} else {
+					log.Infof(" %v timed out?", egressFlowKey)
 				}
 			}
 		}

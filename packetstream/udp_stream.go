@@ -234,19 +234,15 @@ func (f *udpStreamFactory) OnReceive(packet gopacket.Packet) {
 					if p.NetworkLayer() != nil {
 						netlayer := p.NetworkLayer()
 						egressFlowKey.net = netlayer.NetworkFlow()
-						if p.TransportLayer() != nil {
-							egressFlowKey.transport = p.TransportLayer().TransportFlow()
+						// Try to parse the udp header ourselves here
+						// TODO: sanity check of length
+						if v, ok := netlayer.(*layers.IPv4); ok && v.Protocol == layers.IPProtocolUDP {
+							ls := p.Layers()
+							data := ls[1].LayerContents()
+							// source port and dst port
+							egressFlowKey.transport = gopacket.NewFlow(layers.EndpointUDPPort, data[0:2], data[2:4])
 						} else {
-							// Try to parse the udp header ourselves here
-							// TODO: sanity check of length
-							if v, ok := netlayer.(*layers.IPv4); ok && v.Protocol == layers.IPProtocolUDP {
-								ls := p.Layers()
-								data := ls[1].LayerContents()
-								// source port and dst port
-								egressFlowKey.transport = gopacket.NewFlow(layers.EndpointUDPPort, data[0:2], data[2:4])
-							} else {
-								log.V(2).Infof("found no transport layer : %+v", p)
-							}
+							log.V(2).Infof("found no transport layer : %+v", p)
 						}
 					} else {
 						log.V(2).Infof("found no network layer : %+v", p)
