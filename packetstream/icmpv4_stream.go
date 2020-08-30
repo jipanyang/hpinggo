@@ -2,6 +2,7 @@ package packetstream
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	log "github.com/golang/glog"
 	"github.com/google/gopacket"
@@ -234,13 +235,12 @@ func (f *icmpStreamFactory) OnReceive(packet gopacket.Packet) {
 			typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
 			payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
 			if ok {
-				// Parsing through content of icmp reply. Assuming all ok, otherwise crash
-				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, gopacket.Default)
-				icmpEgress, ok := p.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
-				if ok {
-					netflow = p.NetworkLayer().NetworkFlow()
-					kEgress = icmpKey{netflow, icmpEgress.Id, icmpEgress.Seq}
-					s = f.streams[kEgress]
+				FlowKey, err := parseIcmpErrorMessage(payload.LayerContents(), layers.LayerTypeIPv4)
+				if err != nil {
+					log.Infof("Parse ICMP message error: %v\n", err)
+				} else {
+					egressFlowKey := FlowKey.(icmpKey)
+					s = f.streams[egressFlowKey]
 					if s != nil {
 						if f.cmdOpts.TraceRoute {
 							ttl := f.srcTTL
@@ -248,8 +248,11 @@ func (f *icmpStreamFactory) OnReceive(packet gopacket.Packet) {
 								ttl -= 1
 							}
 							logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
-							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, kEgress)
+						} else {
+							logICMPv4(typeCode, egressFlowKey.String(), s.ciEgress, packet)
 						}
+					} else {
+						log.Infof(" %v timed out?", egressFlowKey)
 					}
 				}
 			}
@@ -320,4 +323,66 @@ func (f *icmpStreamFactory) ShowStats() {
 		time.Duration(f.rttMin)*time.Nanosecond,
 		time.Duration(f.rttAvg)*time.Nanosecond,
 		time.Duration(f.rttMax)*time.Nanosecond)
+}
+
+func parseIcmpErrorMessage(data []byte, firstLayerDecoder gopacket.Decoder) (flowkey interface{}, err error) {
+	option := gopacket.DecodeOptions{
+		Lazy:   true,
+		NoCopy: true,
+	}
+	flowkey = nil
+	err = nil
+	// the payload in icmp packet may be trunceted
+	p := gopacket.NewPacket(data, firstLayerDecoder, option)
+	// var net, transport gopacket.Flow
+	if p.NetworkLayer() == nil {
+		flowkey = nil
+		err = fmt.Errorf("found no network layer")
+		return
+	}
+
+	netlayer := p.NetworkLayer()
+	// net gopacket.Flow
+	net := netlayer.NetworkFlow()
+	// IPv4 only for now
+	if v, ok := netlayer.(*layers.IPv4); ok {
+		switch v.Protocol {
+		case layers.IPProtocolTCP:
+			// Expected for most cases, for logging only
+			if errr := p.ErrorLayer(); errr != nil {
+				log.V(2).Infof("Error decoding some part of the packet: %v", errr)
+			}
+			// Get the offset to TCP header
+			offset := len(netlayer.LayerContents())
+			data = data[offset:]
+			log.V(2).Infof("TCP header data: %s\n", hex.Dump(data))
+			transport := gopacket.NewFlow(layers.EndpointTCPPort, data[0:2], data[2:4])
+			flowkey = key{net, transport}
+		case layers.IPProtocolUDP:
+			// Expected for most cases, for logging only
+			if errr := p.ErrorLayer(); errr != nil {
+				log.V(2).Infof("Error decoding some part of the packet: %v", errr)
+			}
+			// Get the offset to UDP header
+			offset := len(netlayer.LayerContents())
+			data = data[offset:]
+			log.V(2).Infof("UDP header data: %s\n", hex.Dump(data))
+			transport := gopacket.NewFlow(layers.EndpointUDPPort, data[0:2], data[2:4])
+			flowkey = key{net, transport}
+
+		case layers.IPProtocolICMPv4:
+			icmpEgress, ok := p.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+			if ok {
+				netflow := p.NetworkLayer().NetworkFlow()
+				flowkey = icmpKey{netflow, icmpEgress.Id, icmpEgress.Seq}
+			} else {
+				err = fmt.Errorf("Found no ICMPv4 layer")
+			}
+		default:
+			err = fmt.Errorf("Unsupported Protocol: %v", v.Protocol)
+		}
+	} else {
+		err = fmt.Errorf("Found no network layer")
+	}
+	return
 }

@@ -33,6 +33,9 @@ limitations under the License.
 //
 // Trace route usage example
 //
+// TCP with jumbo packet:
+// sudo /usr/local/go/bin/go run cmd/hpinggo.go  -s 5432 -p ++79 -traceroute -S -c 15  --keepttl=false  -d 2500  -target www.google.com
+//
 // UDP:
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -c 20
 // sudo hpinggo -target www.google.com -d 128 -udp -p +1234 -traceroute -ttl 5 --keepttl

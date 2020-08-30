@@ -12,8 +12,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"encoding/hex"
+	// "encoding/hex"
 )
 
 // tcpStreamFactory implements reassembly.StreamFactory
@@ -233,53 +232,29 @@ func (f *tcpStreamFactory) OnReceive(packet gopacket.Packet) {
 			typeCode.Type() == layers.ICMPv4TypeTimeExceeded {
 			payload, ok := packet.Layer(gopacket.LayerTypePayload).(*gopacket.Payload)
 			if ok {
-				option := gopacket.DecodeOptions{
-					Lazy:   true,
-					NoCopy: true,
-				}
-				// the payload in icmp packet may be trunceted
-				p := gopacket.NewPacket(payload.LayerContents(), layers.LayerTypeIPv4, option)
-				// var net, transport gopacket.Flow
-				var egressFlowKey key
-				if p.NetworkLayer() != nil {
-					netlayer := p.NetworkLayer()
-					egressFlowKey.net = netlayer.NetworkFlow()
-					// Try to parse the TCP header ourselves here
-					// TODO: sanity check of length
-					if v, ok := netlayer.(*layers.IPv4); ok && v.Protocol == layers.IPProtocolTCP {
-						data := []byte{}
-						if err := p.ErrorLayer(); err != nil {
-							log.V(2).Infof("Error decoding some part of the packet: %v", err)
-						}
-						// Get the offset to TCP header
-						offset := len(netlayer.LayerContents())
-						data = payload.LayerContents()[offset:]
-						log.V(2).Infof("TCP header data: %s\n", hex.Dump(data))
-						// source port and dst port
-						egressFlowKey.transport = gopacket.NewFlow(layers.EndpointTCPPort, data[0:2], data[2:4])
-					} else {
-						log.V(2).Infof("found no transport layer : %+v", p)
-					}
-					log.V(2).Infof("egressFlowKey: %+v ", egressFlowKey)
+				FlowKey, err := parseIcmpErrorMessage(payload.LayerContents(), layers.LayerTypeIPv4)
+				if err != nil {
+					log.Infof("Parse ICMP message error: %v\n", err)
 				} else {
-					log.V(2).Infof("found no network layer : %+v", p)
-				}
-
-				s = f.streams[egressFlowKey]
-				if s != nil {
-					s.factory.updateStreamRecvStats(&gopacket.CaptureInfo{Timestamp: time.Now()}, s.ciEgress)
-					if f.cmdOpts.TraceRoute {
-						ttl := f.srcTTL
-						if !f.cmdOpts.TraceRouteKeepTTL {
-							ttl -= 1
+					// should be tcp/udp flow key
+					egressFlowKey := FlowKey.(key)
+					log.V(2).Infof("ICMP payload egress key : %+v", egressFlowKey)
+					s = f.streams[egressFlowKey]
+					if s != nil {
+						s.factory.updateStreamRecvStats(&gopacket.CaptureInfo{Timestamp: time.Now()}, s.ciEgress)
+						if f.cmdOpts.TraceRoute {
+							ttl := f.srcTTL
+							if !f.cmdOpts.TraceRouteKeepTTL {
+								ttl -= 1
+							}
+							logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
+							// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, egressFlowKey)
+						} else {
+							logICMPv4(typeCode, egressFlowKey.String(), s.ciEgress, packet)
 						}
-						logTraceRouteIPv4(ttl, s.ciEgress, typeCode, packet)
-						// fmt.Fprintf(os.Stdout, "hop=%v original flow %v\n", f.srcTTL, egressFlowKey)
 					} else {
-						logICMPv4(typeCode, egressFlowKey.String(), s.ciEgress, packet)
+						log.Infof(" %v timed out?", egressFlowKey)
 					}
-				} else {
-					log.Infof(" %v timed out?", egressFlowKey)
 				}
 			}
 		}
